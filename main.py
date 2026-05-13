@@ -1,4 +1,7 @@
 import marimo
+from collections.abc import Callable
+from numpy import ndarray
+from types import ModuleType
 
 app = marimo.App(width="wide")
 
@@ -8,29 +11,28 @@ def _():
     import marimo as mo
     import numpy as np
     import matplotlib.pyplot as plt
-    import scipy.datasets
 
-    return mo, np, plt, scipy
+    return mo, np, plt
 
 
 @app.cell
-def _(np):
-    def rgb_to_ycbcr(img: np.ndarray) -> np.ndarray:
+def _(np: ModuleType) -> tuple[Callable[[ndarray, str], tuple[list[ndarray], list[str], list[str], list[tuple[int, int]]]]]:
+    def rgb_to_ycbcr(img: "ndarray") -> "ndarray":
         """Conversion RGB → YCbCr selon la norme ITU-R BT.601."""
-        r: np.ndarray = img[..., 0].astype(float)
-        g: np.ndarray = img[..., 1].astype(float)
-        b: np.ndarray = img[..., 2].astype(float)
-        Y: np.ndarray  =  16 + ( 65.481 * r + 128.553 * g + 24.966 * b) / 255.0
-        Cb: np.ndarray = 128 + (-37.797 * r -  74.203 * g + 112.0  * b) / 255.0
-        Cr: np.ndarray = 128 + (112.0   * r -  93.786 * g - 18.214 * b) / 255.0
+        r: ndarray = img[..., 0].astype(float)
+        g: ndarray = img[..., 1].astype(float)
+        b: ndarray = img[..., 2].astype(float)
+        Y: ndarray  =  16 + ( 65.481 * r + 128.553 * g + 24.966 * b) / 255.0
+        Cb: ndarray = 128 + (-37.797 * r -  74.203 * g + 112.0  * b) / 255.0
+        Cr: ndarray = 128 + (112.0   * r -  93.786 * g - 18.214 * b) / 255.0
         return np.stack([Y, Cb, Cr], axis=-1)
 
     def get_channels(
-        img: np.ndarray,
+        img: "ndarray",
         space: str,
-    ) -> tuple[list[np.ndarray], list[str], list[str], list[tuple[int, int]]]:
+    ) -> "tuple[list[ndarray], list[str], list[str], list[tuple[int, int]]]":
         """Retourne (canaux, noms, colormaps, plages) pour le modèle colorimétrique donné."""
-        channels: list[np.ndarray]
+        channels: list[ndarray]
         names: list[str]
         cmaps: list[str]
         ranges: list[tuple[int, int]]
@@ -42,7 +44,7 @@ def _(np):
             cmaps  = ["Reds", "Greens", "Blues"]
             ranges = [(0, 255), (0, 255), (0, 255)]
         else:  # YCbCr
-            ycbcr: np.ndarray    = rgb_to_ycbcr(img)
+            ycbcr: ndarray = rgb_to_ycbcr(img)
             channels = [ycbcr[..., 0], ycbcr[..., 1], ycbcr[..., 2]]
             names    = ["Y - Luminance", "Cb - Chroma bleue", "Cr - Chroma rouge"]
             cmaps    = ["gray", "RdBu", "RdYlBu_r"]
@@ -53,14 +55,15 @@ def _(np):
 
 
 @app.cell
-def _(scipy):
-    _img_full: np.ndarray = scipy.datasets.face()   # 768x1024 RGB uint8
-    image: np.ndarray = _img_full[::2, ::2]         # -> 384x512, plus fluide en UI
+def _(np: ModuleType) -> tuple[ndarray]:
+    from scipy import datasets as _datasets
+    _img_full: "ndarray" = _datasets.face()   # 768x1024 RGB uint8
+    image: "ndarray" = _img_full[::2, ::2]    # -> 384x512, plus fluide en UI
     return (image,)
 
 
 @app.cell
-def _(mo) -> None:
+def _(mo: ModuleType) -> None:
     mo.md("""
     # Compression JPEG - Cours interactif
 
@@ -80,7 +83,7 @@ def _(mo) -> None:
 
 
 @app.cell
-def _(mo) -> None:
+def _(mo: ModuleType) -> None:
     mo.md("""
     ## Etape 1 : Codage de la couleur
     """)
@@ -88,7 +91,7 @@ def _(mo) -> None:
 
 
 @app.cell
-def _(mo):
+def _(mo: ModuleType) -> tuple[marimo.ui.radio, marimo.ui.checkbox]:
     color_space = mo.ui.radio(
         options=["RGB", "YCbCr"],
         value="RGB",
@@ -103,11 +106,19 @@ def _(mo):
 
 
 @app.cell
-def _(color_space, get_channels, image, mo, np, plt, show_hist) -> None:
-    _channels: list[np.ndarray]
-    _names: list[str]
-    _cmaps: list[str]
-    _ranges: list[tuple[int, int]]
+def _(
+    color_space: marimo.ui.radio,
+    get_channels: Callable[[ndarray, str], tuple[list[ndarray], list[str], list[str], list[tuple[int, int]]]],
+    image: ndarray,
+    mo: ModuleType,
+    np: ModuleType,
+    plt: ModuleType,
+    show_hist: marimo.ui.checkbox,
+) -> None:
+    _channels: "list[ndarray]"
+    _names: "list[str]"
+    _cmaps: "list[str]"
+    _ranges: "list[tuple[int, int]]"
     _channels, _names, _cmaps, _ranges = get_channels(image, color_space.value)
     _hist_colors: dict[str, list[str]] = {
         "RGB":   ["#cc3333", "#33aa33", "#3333cc"],
@@ -165,12 +176,12 @@ def _(color_space, get_channels, image, mo, np, plt, show_hist) -> None:
     )
     _out = mo.as_html(_fig)
     plt.close(_fig)
-    _out
+    mo.output.replace(_out)
     return
 
 
 @app.cell
-def _(color_space, mo) -> None:
+def _(color_space: marimo.ui.radio, mo: ModuleType) -> None:
     _explanations = {
         "RGB": mo.md("""
     **Espace RGB** - representation native des capteurs et des ecrans.
@@ -200,7 +211,7 @@ def _(color_space, mo) -> None:
 
 
 @app.cell
-def _(mo) -> None:
+def _(mo: ModuleType) -> None:
     mo.md("""
     ---
     ## Etape 2 : Sous-échantillonnage de la chrominance - *à venir*
@@ -212,7 +223,7 @@ def _(mo) -> None:
 
 
 @app.cell
-def _(mo) -> None:
+def _(mo: ModuleType) -> None:
     mo.md("""
     ## Etape 3 : Découpage en blocs 8x8 - *à venir*
 
@@ -223,7 +234,7 @@ def _(mo) -> None:
 
 
 @app.cell
-def _(mo) -> None:
+def _(mo: ModuleType) -> None:
     mo.md("""
     ## Etape 4 : Transformée en cosinus discrète (DCT) - *à venir*
 
@@ -234,7 +245,7 @@ def _(mo) -> None:
 
 
 @app.cell
-def _(mo) -> None:
+def _(mo: ModuleType) -> None:
     mo.md("""
     ## Etape 5 : Quantification - *à venir*
 
@@ -245,7 +256,7 @@ def _(mo) -> None:
 
 
 @app.cell
-def _(mo) -> None:
+def _(mo: ModuleType) -> None:
     mo.md("""
     ## Etape 6 : Codage entropique - *à venir*
 
