@@ -99,7 +99,7 @@ def _(mo: ModuleType) -> tuple[marimo.ui.radio, marimo.ui.checkbox]:
     )
     show_hist = mo.ui.checkbox(
         label="Afficher les histogrammes de canaux",
-        value=True,
+        value=False,
     )
     mo.hstack([color_space, show_hist], gap="3rem", justify="start")
     return color_space, show_hist
@@ -126,15 +126,16 @@ def _(
     }
     _hc: list[str] = _hist_colors[color_space.value]
 
-    _n_rows: int = 2 if show_hist.value else 1
-    _fig = plt.figure(figsize=(16, 4.5 * _n_rows + 0.8), layout="constrained")
-    _gs = _fig.add_gridspec(
-        _n_rows, 4,
-        width_ratios=[1.6, 1, 1, 1],
-    )
+    _row_h: float = 4.0
+    _hist_h: float = 2.0
+    _n_sfs: int = 3 if show_hist.value else 2
+    _h_ratios: list[float] = [_row_h, _row_h, _hist_h] if show_hist.value else [_row_h, _row_h]
+    _fig_h: float = 2 * _row_h + (_hist_h if show_hist.value else 0.0) + 0.6
+    _fig = plt.figure(figsize=(12, _fig_h), layout="constrained")
+    _sfs = _fig.subfigures(_n_sfs, 1, height_ratios=_h_ratios)
 
-    # Image originale
-    _ax_orig = _fig.add_subplot(_gs[:, 0])
+    # Ligne 0 : image originale centrée (layout isolé des colorbars de la ligne 1)
+    _ax_orig = _sfs[0].add_subplot(1, 3, 2)
     _ax_orig.imshow(image)
     _ax_orig.set_title(
         f"Image originale (RGB)\n{image.shape[1]}x{image.shape[0]} px",
@@ -142,15 +143,15 @@ def _(
     )
     _ax_orig.axis("off")
 
-    # Canaux separés (ligne 0) et histogrammes optionnels (ligne 1)
+    # Ligne 1 : canaux séparés
     for _i, (_ch, _name, _cmap, (_vmin, _vmax)) in enumerate(
         zip(_channels, _names, _cmaps, _ranges)
     ):
-        _ax_ch = _fig.add_subplot(_gs[0, _i + 1])
+        _ax_ch = _sfs[1].add_subplot(1, 3, _i + 1)
         _im = _ax_ch.imshow(_ch, cmap=_cmap, vmin=_vmin, vmax=_vmax)
         _ax_ch.set_title(_name, fontsize=10)
         _ax_ch.axis("off")
-        _fig.colorbar(_im, ax=_ax_ch, fraction=0.046, pad=0.04)
+        _sfs[1].colorbar(_im, ax=_ax_ch, fraction=0.046, pad=0.04, location="left")
         _ax_ch.text(
             0.5, -0.03,
             f"min={float(np.min(_ch)):.1f}  max={float(np.max(_ch)):.1f}",
@@ -158,8 +159,12 @@ def _(
             fontsize=8, color="#555555", clip_on=False,
         )
 
-        if show_hist.value:
-            _ax_h = _fig.add_subplot(_gs[1, _i + 1])
+    # Ligne 2 : histogrammes optionnels
+    if show_hist.value:
+        for _i, (_ch, _, _, (_vmin, _vmax)) in enumerate(
+            zip(_channels, _names, _cmaps, _ranges)
+        ):
+            _ax_h = _sfs[2].add_subplot(1, 3, _i + 1)
             _ax_h.hist(
                 _ch.ravel(), bins=64, range=(_vmin, _vmax),
                 color=_hc[_i], edgecolor="none", alpha=0.85,
@@ -171,7 +176,7 @@ def _(
             _ax_h.spines[["top", "right"]].set_visible(False)
 
     _fig.suptitle(
-        f"Décomposition en canaux - espace {color_space.value}",
+        f"Décomposition en canaux - espace {color_space.value}\n\n",
         fontsize=13, fontweight="bold",
     )
     _out = mo.as_html(_fig)
