@@ -17,16 +17,23 @@ def _():
 def _(np):
     def rgb_to_ycbcr(img: np.ndarray) -> np.ndarray:
         """Conversion RGB → YCbCr selon la norme ITU-R BT.601."""
-        r = img[..., 0].astype(float)
-        g = img[..., 1].astype(float)
-        b = img[..., 2].astype(float)
-        Y  =  16 + ( 65.481 * r + 128.553 * g + 24.966 * b) / 255.0
-        Cb = 128 + (-37.797 * r -  74.203 * g + 112.0  * b) / 255.0
-        Cr = 128 + (112.0   * r -  93.786 * g - 18.214 * b) / 255.0
+        r: np.ndarray = img[..., 0].astype(float)
+        g: np.ndarray = img[..., 1].astype(float)
+        b: np.ndarray = img[..., 2].astype(float)
+        Y: np.ndarray  =  16 + ( 65.481 * r + 128.553 * g + 24.966 * b) / 255.0
+        Cb: np.ndarray = 128 + (-37.797 * r -  74.203 * g + 112.0  * b) / 255.0
+        Cr: np.ndarray = 128 + (112.0   * r -  93.786 * g - 18.214 * b) / 255.0
         return np.stack([Y, Cb, Cr], axis=-1)
 
-    def get_channels(img, space):
+    def get_channels(
+        img: np.ndarray,
+        space: str,
+    ) -> tuple[list[np.ndarray], list[str], list[str], list[tuple[int, int]]]:
         """Retourne (canaux, noms, colormaps, plages) pour le modèle colorimétrique donné."""
+        channels: list[np.ndarray]
+        names: list[str]
+        cmaps: list[str]
+        ranges: list[tuple[int, int]]
         if space == "RGB":
             channels = [img[..., 0].astype(float),
                         img[..., 1].astype(float),
@@ -35,7 +42,7 @@ def _(np):
             cmaps  = ["Reds", "Greens", "Blues"]
             ranges = [(0, 255), (0, 255), (0, 255)]
         else:  # YCbCr
-            ycbcr    = rgb_to_ycbcr(img)
+            ycbcr: np.ndarray    = rgb_to_ycbcr(img)
             channels = [ycbcr[..., 0], ycbcr[..., 1], ycbcr[..., 2]]
             names    = ["Y - Luminance", "Cb - Chroma bleue", "Cr - Chroma rouge"]
             cmaps    = ["gray", "RdBu", "RdYlBu_r"]
@@ -47,13 +54,13 @@ def _(np):
 
 @app.cell
 def _(scipy):
-    _img_full = scipy.datasets.face()   # 768x1024 RGB uint8
-    image = _img_full[::2, ::2]         # -> 384x512, plus fluide en UI
+    _img_full: np.ndarray = scipy.datasets.face()   # 768x1024 RGB uint8
+    image: np.ndarray = _img_full[::2, ::2]         # -> 384x512, plus fluide en UI
     return (image,)
 
 
 @app.cell
-def _(mo):
+def _(mo) -> None:
     mo.md("""
     # Compression JPEG - Cours interactif
 
@@ -73,7 +80,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _(mo) -> None:
     mo.md("""
     ## Etape 1 : Codage de la couleur
     """)
@@ -96,15 +103,19 @@ def _(mo):
 
 
 @app.cell
-def _(color_space, get_channels, image, mo, np, plt, show_hist):
+def _(color_space, get_channels, image, mo, np, plt, show_hist) -> None:
+    _channels: list[np.ndarray]
+    _names: list[str]
+    _cmaps: list[str]
+    _ranges: list[tuple[int, int]]
     _channels, _names, _cmaps, _ranges = get_channels(image, color_space.value)
-    _hist_colors = {
+    _hist_colors: dict[str, list[str]] = {
         "RGB":   ["#cc3333", "#33aa33", "#3333cc"],
         "YCbCr": ["#555555", "#4169e1", "#dc143c"],
     }
-    _hc = _hist_colors[color_space.value]
+    _hc: list[str] = _hist_colors[color_space.value]
 
-    _n_rows = 2 if show_hist.value else 1
+    _n_rows: int = 2 if show_hist.value else 1
     _fig = plt.figure(figsize=(16, 4.5 * _n_rows + 0.8))
     _gs = _fig.add_gridspec(
         _n_rows, 4,
@@ -161,7 +172,7 @@ def _(color_space, get_channels, image, mo, np, plt, show_hist):
 
 
 @app.cell
-def _(color_space, mo):
+def _(color_space, mo) -> None:
     _explanations = {
         "RGB": mo.md("""
     **Espace RGB** - representation native des capteurs et des ecrans.
@@ -191,7 +202,7 @@ def _(color_space, mo):
 
 
 @app.cell
-def _(mo):
+def _(mo) -> None:
     mo.md("""
     ---
     ## Etape 2 : Sous-échantillonnage de la chrominance - *à venir*
@@ -203,7 +214,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _(mo) -> None:
     mo.md("""
     ## Etape 3 : Découpage en blocs 8x8 - *à venir*
 
@@ -214,7 +225,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _(mo) -> None:
     mo.md("""
     ## Etape 4 : Transformée en cosinus discrète (DCT) - *à venir*
 
@@ -225,7 +236,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _(mo) -> None:
     mo.md("""
     ## Etape 5 : Quantification - *à venir*
 
@@ -236,7 +247,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _(mo) -> None:
     mo.md("""
     ## Etape 6 : Codage entropique - *à venir*
 
