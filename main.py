@@ -184,26 +184,26 @@ def _(
 def _(color_space: marimo.ui.radio, mo: ModuleType) -> None:
     _explanations = {
         "RGB": mo.md("""
-    **Espace RGB** - representation native des capteurs et des ecrans.
+    **Espace RGB** - représentation native des capteurs et des écrans.
 
-    Chaque pixel est defini par trois composantes *Rouge (R)*, *Vert (G)*, *Bleu (B)* dans [0, 255].
-    Cet espace est **peu adapte a la compression** : les trois canaux sont fortement correles entre eux
-    et l'oeil humain n'est pas egalement sensible aux trois couleurs primaires.
+    Chaque pixel est défini par trois composantes *Rouge (R)*, *Vert (G)*, *Bleu (B)* codées sur 8 bits, soit dans l'intervalle [0, 255].
+    Cet espace est **peu adapté à la compression** : les trois canaux sont fortement corrélés entre eux
+    et l'oeil humain n'est pas sensible de la même manière aux trois couleurs primaires.
 
-    Basculez sur **YCbCr** pour voir comment JPEG separe luminance et chrominance.
+    Basculez sur **YCbCr** pour voir comment JPEG sépare luminance et chrominance.
     """),
         "YCbCr": mo.md("""
-    **Espace YCbCr** - representation utilisee par le standard JPEG (norme ITU-R BT.601).
+    **Espace YCbCr** - représentation utilisée par le standard JPEG (norme ITU-R BT.601).
 
-    | Canal | Plage | Role |
+    | Canal | Plage | Rôle |
     |-------|-------|------|
-    | **Y** - Luminance | [16, 235] | Information de luminosite - percue avec la plus haute acuite visuelle |
-    | **Cb** - Chroma bleue | [16, 240] | Difference de couleur vers le bleu |
-    | **Cr** - Chroma rouge | [16, 240] | Difference de couleur vers le rouge |
+    | **Y** - Luminance | [16, 235] | Information de luminosité - perçue avec la plus haute acuité visuelle |
+    | **Cb** - Chroma bleue | [16, 240] | Différence de couleur vers le bleu |
+    | **Cr** - Chroma rouge | [16, 240] | Différence de couleur vers le rouge |
 
     L'oeil humain est **beaucoup plus sensible** aux variations de luminance (Y) qu'aux variations de
-    chrominance (Cb, Cr). JPEG exploite cette propriete : a l'etape suivante, Cb et Cr seront
-    **sous-echantillonnes** (reduits en resolution spatiale) sans perte perceptible notable.
+    chrominance (Cb, Cr). JPEG exploite cette propriété : à l'étape suivante, Cb et Cr seront
+    **sous-échantillonnés** (réduits en résolution spatiale) sans perte perceptible notable.
     """),
     }
     mo.callout(_explanations[color_space.value], kind="info")
