@@ -116,11 +116,10 @@ def _(color_space, get_channels, image, mo, np, plt, show_hist) -> None:
     _hc: list[str] = _hist_colors[color_space.value]
 
     _n_rows: int = 2 if show_hist.value else 1
-    _fig = plt.figure(figsize=(16, 4.5 * _n_rows + 0.8))
+    _fig = plt.figure(figsize=(16, 4.5 * _n_rows + 0.8), layout="constrained")
     _gs = _fig.add_gridspec(
         _n_rows, 4,
         width_ratios=[1.6, 1, 1, 1],
-        hspace=0.5, wspace=0.3,
     )
 
     # Image originale
@@ -164,7 +163,6 @@ def _(color_space, get_channels, image, mo, np, plt, show_hist) -> None:
         f"Décomposition en canaux - espace {color_space.value}",
         fontsize=13, fontweight="bold",
     )
-    plt.tight_layout()
     _out = mo.as_html(_fig)
     plt.close(_fig)
     _out
