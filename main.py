@@ -71,7 +71,7 @@ def _(mo: ModuleType) -> None:
     Modifiez les paramètres pour observer les effets en temps réel.
 
     | # | Etape | Description | Statut |
-    |---|-------|-------------|--------|
+    |:--|:------|:------------|:-------|
     | 1 | Codage de la couleur | Conversion RGB vers YCbCr | OK |
     | 2 | Sous-échantillonnage | Reduction des chrominances Cb/Cr | à venir |
     | 3 | Découpage en blocs | Partition en blocs 8x8 pixels | à venir |
@@ -196,7 +196,7 @@ def _(color_space: marimo.ui.radio, mo: ModuleType) -> None:
     **Espace YCbCr** - représentation utilisée par le standard JPEG (norme ITU-R BT.601).
 
     | Canal | Plage | Rôle |
-    |-------|-------|------|
+    |:------|:------|:-----|
     | **Y** - Luminance | [16, 235] | Information de luminosité - perçue avec la plus haute acuité visuelle |
     | **Cb** - Chroma bleue | [16, 240] | Différence de couleur vers le bleu |
     | **Cr** - Chroma rouge | [16, 240] | Différence de couleur vers le rouge |
