@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 import marimo
 from collections.abc import Callable
-from matplotlib.colors import LinearSegmentedColormap
-from numpy import ndarray
-from types import ModuleType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from matplotlib.colors import LinearSegmentedColormap
+    from numpy import ndarray
+    from types import ModuleType
 
 app = marimo.App(width="wide")
 
@@ -12,14 +17,19 @@ def _():
     import marimo as mo
     import numpy as np
     import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
 
-    return mo, np, plt
+    return mo, np, plt, LinearSegmentedColormap
 
 
 @app.cell
-def _(np: ModuleType) -> tuple[
+def _(
+    np: ModuleType,
+    LinearSegmentedColormap: type[LinearSegmentedColormap],
+) -> tuple[
     Callable[[ndarray, str], tuple[list[ndarray], list[str], list[str | LinearSegmentedColormap], list[tuple[int, int]]]],
     Callable[[ndarray, ndarray, ndarray], ndarray],
+    Callable[[ndarray], ndarray],
 ]:
 
     # Matrice ITU-R BT.601 : lignes = (Y, Cb, Cr), colonnes = (R, G, B).
@@ -102,7 +112,7 @@ def _(np: ModuleType) -> tuple[
 
         return channels, names, _CMAPS[space], ranges
 
-    return (get_channels, ycbcr_to_rgb)
+    return (get_channels, ycbcr_to_rgb, rgb_to_ycbcr)
 
 
 @app.cell
@@ -124,7 +134,7 @@ def _(mo: ModuleType) -> None:
     | # | Etape | Description | Statut |
     |:--|:------|:------------|:-------|
     | 1 | Codage de la couleur | Conversion RGB vers YCbCr | OK |
-    | 2 | Sous-échantillonnage | Reduction des chrominances Cb/Cr | à venir |
+    | 2 | Sous-échantillonnage | Réduction des chrominances Cb/Cr | OK |
     | 3 | Découpage en blocs | Partition en blocs 8x8 pixels | à venir |
     | 4 | DCT | Transformée en cosinus discrète | à venir |
     | 5 | Quantification | Suppression des hautes fréquences | à venir |
@@ -270,11 +280,188 @@ def _(color_space: marimo.ui.radio, mo: ModuleType) -> None:
 def _(mo: ModuleType) -> None:
     mo.md("""
     ---
-    ## Etape 2 : Sous-échantillonnage de la chrominance - *à venir*
-
-    Réduction spatiale des canaux Cb et Cr (modes 4:4:4 / 4:2:2 / 4:2:0).
-    L'oeil étant peu sensible à la chrominance, on peut réduire sa résolution sans artefact visible.
+    ## Etape 2 : Sous-échantillonnage de la chrominance
     """)
+    return
+
+
+@app.cell
+def _(np: ModuleType) -> tuple[
+    Callable[[ndarray, str], tuple[ndarray, ndarray, ndarray]],
+    Callable[[ndarray, ndarray, ndarray, str], ndarray],
+]:
+    def chroma_subsample(
+        ycbcr: "ndarray", mode: str
+    ) -> "tuple[ndarray, ndarray, ndarray]":
+        """Sous-échantillonne Cb et Cr d'une image YCbCr selon le mode donné.
+
+        Retourne (Y, Cb_sub, Cr_sub) :
+        - 4:4:4 : pass-through, aucune réduction
+        - 4:2:2 : résolution horizontale de Cb/Cr divisée par 2 → H x W/2
+        - 4:2:0 : résolution divisée par 2 dans les deux axes → H/2 x W/2
+        """
+        Y  = ycbcr[..., 0]
+        Cb = ycbcr[..., 1]
+        Cr = ycbcr[..., 2]
+        if mode == "4:4:4":
+            return Y, Cb, Cr
+        elif mode == "4:2:2":
+            return Y, Cb[:, ::2], Cr[:, ::2]
+        else:  # 4:2:0
+            return Y, Cb[::2, ::2], Cr[::2, ::2]
+
+    def chroma_upsample(
+        Y: "ndarray", Cb_sub: "ndarray", Cr_sub: "ndarray", mode: str
+    ) -> "ndarray":
+        """Reconstruit un tableau YCbCr (HxWx3) par upsampling nearest-neighbor.
+
+        Inverse de chroma_subsample. Chaque valeur sous-échantillonnée est dupliquée
+        sur ses voisins. Le crop final gère les dimensions impaires de l'image.
+        """
+        H, W = Y.shape
+        if mode == "4:4:4":
+            Cb_up, Cr_up = Cb_sub, Cr_sub
+        elif mode == "4:2:2":
+            # Duplication horizontale uniquement
+            Cb_up = np.repeat(Cb_sub, 2, axis=1)[:, :W]
+            Cr_up = np.repeat(Cr_sub, 2, axis=1)[:, :W]
+        else:  # 4:2:0
+            # Duplication horizontale et verticale
+            Cb_up = np.repeat(np.repeat(Cb_sub, 2, axis=0), 2, axis=1)[:H, :W]
+            Cr_up = np.repeat(np.repeat(Cr_sub, 2, axis=0), 2, axis=1)[:H, :W]
+        return np.stack([Y, Cb_up, Cr_up], axis=-1)
+
+    return (chroma_subsample, chroma_upsample)
+
+
+@app.cell
+def _(mo: ModuleType) -> tuple[marimo.ui.radio]:
+    sampling_mode = mo.ui.radio(
+        options=["4:4:4", "4:2:2", "4:2:0"],
+        value="4:2:0",
+        label="Mode de sous-échantillonnage",
+    )
+    mo.hstack([sampling_mode], justify="start")
+    return (sampling_mode,)
+
+
+@app.cell
+def _(
+    LinearSegmentedColormap: type[LinearSegmentedColormap],
+    chroma_subsample: Callable[[ndarray, str], tuple[ndarray, ndarray, ndarray]],
+    chroma_upsample: Callable[[ndarray, ndarray, ndarray, str], ndarray],
+    image: ndarray,
+    mo: ModuleType,
+    np: ModuleType,
+    plt: ModuleType,
+    rgb_to_ycbcr: Callable[[ndarray], ndarray],
+    sampling_mode: marimo.ui.radio,
+    ycbcr_to_rgb: Callable[[ndarray, ndarray, ndarray], ndarray],
+) -> None:
+    # Patch synthétique 8x8 : Y uniforme (128), Cb/Cr aléatoires sur toute la plage [16, 240].
+    # Couleurs maximalement saturées → l'effet du sous-échantillonnage est immédiatement visible.
+    _rng = np.random.default_rng(42)
+    _Y_p: "ndarray"  = _rng.uniform(16.0, 235.0, (8, 8))
+    _Cb_p: "ndarray" = _rng.uniform(16.0, 240.0, (8, 8))
+    _Cr_p: "ndarray" = _rng.uniform(16.0, 240.0, (8, 8))
+    _patch: "ndarray" = ycbcr_to_rgb(_Y_p, _Cb_p, _Cr_p)
+
+    _ycbcr_p: "ndarray" = rgb_to_ycbcr(_patch)
+    _Yp: "ndarray"
+    _Cb_subp: "ndarray"
+    _Cr_subp: "ndarray"
+    _Yp, _Cb_subp, _Cr_subp = chroma_subsample(_ycbcr_p, sampling_mode.value)
+    _ycbcr_up_p: "ndarray" = chroma_upsample(_Yp, _Cb_subp, _Cr_subp, sampling_mode.value)
+    _rec_patch: "ndarray" = ycbcr_to_rgb(
+        _ycbcr_up_p[..., 0], _ycbcr_up_p[..., 1], _ycbcr_up_p[..., 2]
+    )
+
+    # Pas de grille (en pixels) pour les canaux chrominance selon le mode
+    _block_label: "str" = {"4:4:4": "1x1", "4:2:2": "2x1", "4:2:0": "2x2"}[sampling_mode.value]
+    _gs_w: "int" = {"4:4:4": 1, "4:2:2": 2, "4:2:0": 2}[sampling_mode.value]
+    _gs_h: "int" = {"4:4:4": 1, "4:2:2": 1, "4:2:0": 2}[sampling_mode.value]
+    _PH, _PW = 8, 8
+
+    # Colormaps BT.601 pour Cb et Cr (mêmes ancres que l'étape 1)
+    _cb_cmap = LinearSegmentedColormap.from_list("Cb_BT601", [
+        (130/255, 174/255,   0/255),
+        (130/255, 130/255, 130/255),
+        (130/255,  86/255, 255/255),
+    ])
+    _cr_cmap = LinearSegmentedColormap.from_list("Cr_BT601", [
+        (  0/255, 221/255, 130/255),
+        (130/255, 130/255, 130/255),
+        (255/255,  39/255, 130/255),
+    ])
+
+    _fig = plt.figure(figsize=(12, 9), layout="constrained", dpi=200)
+    _sfs = _fig.subfigures(2, 1, height_ratios=[5.0, 4.0])
+
+    # Ligne 0 : patch original | reconstruit
+    for _i, (_img, _title) in enumerate([
+        (_patch,     "Original — patch 8x8 px"),
+        (_rec_patch, f"Reconstruit ({sampling_mode.value})"),
+    ]):
+        _ax = _sfs[0].add_subplot(1, 2, _i + 1)
+        # interpolation="nearest" : chaque pixel source = rectangle plein, sans lissage
+        _ax.imshow(_img, interpolation="nearest")
+        _ax.set_title(_title, fontsize=10)
+        _ax.axis("off")
+
+    # Ligne 1 : Y (grille 1x1) | Cb (grille selon mode) | Cr (grille selon mode)
+    for _i, (_ch, _cmap, _name, _vmin, _vmax, _gsw, _gsh) in enumerate([
+        (_ycbcr_up_p[..., 0], "gray",   "Y — Luminance",              16, 235, 1,     1    ),
+        (_ycbcr_up_p[..., 1], _cb_cmap, "Cb — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
+        (_ycbcr_up_p[..., 2], _cr_cmap, "Cr — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
+    ]):
+        _ax = _sfs[1].add_subplot(1, 3, _i + 1)
+        _im = _ax.imshow(_ch, cmap=_cmap, vmin=_vmin, vmax=_vmax, interpolation="nearest")
+        _sfs[1].colorbar(_im, ax=_ax, fraction=0.046, pad=0.04, location="left")
+        _ax.set_title(_name, fontsize=10)
+        _ax.axis("off")
+        # Grille blanche : chaque cellule délimite un bloc (1x1 pour Y, variable pour Cb/Cr)
+        for _x in range(_gsw, _PW, _gsw):
+            _ax.axvline(_x - 0.5, color="white", linewidth=0.8, alpha=0.8)
+        for _y in range(_gsh, _PH, _gsh):
+            _ax.axhline(_y - 0.5, color="white", linewidth=0.8, alpha=0.8)
+
+    _fig.suptitle(
+        f"Sous-échantillonnage de la chrominance — mode {sampling_mode.value}\n\n",
+        fontsize=13, fontweight="bold",
+    )
+    _out = mo.as_html(_fig)
+    plt.close(_fig)
+    mo.output.replace(_out)  # replace() évite l'accumulation de figures à chaque ré-exécution réactive
+    return
+
+
+@app.cell
+def _(mo: ModuleType, sampling_mode: marimo.ui.radio) -> None:
+    _explanations = {
+        "4:4:4": mo.md("""
+    **Mode 4:4:4** — aucun sous-échantillonnage.
+
+    Chaque pixel conserve ses trois composantes Y, Cb, Cr à pleine résolution.
+    Cb et Cr sont stockés à résolution pleine **(W x H)** — gain en chrominance : **0 %**.
+    Utilisé en photographie professionnelle et en vidéo haut de gamme.
+    """),
+        "4:2:2": mo.md("""
+    **Mode 4:2:2** — sous-échantillonnage horizontal uniquement.
+
+    Pour chaque ligne, une valeur Cb et Cr est retenue tous les 2 pixels horizontaux.
+    Cb et Cr sont stockés à **(W/2 x H)** — gain en données chrominance : **~33 %**.
+    Utilisé en production vidéo broadcast. La perte est peu perceptible sur les images naturelles.
+    """),
+        "4:2:0": mo.md("""
+    **Mode 4:2:0** — sous-échantillonnage horizontal et vertical.
+
+    Une valeur Cb et Cr est retenue pour chaque bloc 2x2 pixels.
+    Cb et Cr sont stockés à **(W/2 x H/2)** — gain en données chrominance : **~50 %**.
+    C'est le mode utilisé par **JPEG et la majorité des codecs vidéo** (H.264, H.265, VP9).
+    Il représente le meilleur compromis qualité/compression pour les contenus grand public.
+    """),
+    }
+    mo.callout(_explanations[sampling_mode.value], kind="info")
     return
 
 
