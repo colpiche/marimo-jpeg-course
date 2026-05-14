@@ -64,7 +64,7 @@ def _(
 
         # Le clip est nécessaire : les couleurs en bord de gamme YCbCr peuvent
         # produire des valeurs RGB hors de [0, 255].
-        return np.clip(np.stack([r, g, b], axis=-1), 0, 255).astype(np.uint8)
+        return np.clip(np.round(np.stack([r, g, b], axis=-1)), 0, 255).astype(np.uint8)
 
     # RGB   : dégradé noir → couleur primaire (0 = canal absent, 255 = saturation pleine).
     # YCbCr : 3 ancres par canal (min=16, neutre=128, max=240) calculées avec
