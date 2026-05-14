@@ -13,7 +13,7 @@ app = marimo.App(width="wide")
 
 
 @app.cell
-def _():
+def _() -> tuple[ModuleType, ModuleType, ModuleType, type[LinearSegmentedColormap]]:
     import marimo as mo
     import numpy as np
     import matplotlib.pyplot as plt
@@ -90,7 +90,7 @@ def _(
         ],
     }
 
-    def get_channels(img: "ndarray", space: str):
+    def get_channels(img: "ndarray", space: str) -> "tuple[list[ndarray], list[str], list[str | LinearSegmentedColormap], list[tuple[int, int]]]":
         """Décompose une image RGB uint8 en ses trois canaux scalaires 2D.
 
         Retourne (channels, names, cmaps, ranges) où :
@@ -135,7 +135,7 @@ def _(mo: ModuleType) -> None:
     |:--|:------|:------------|:-------|
     | 1 | Codage de la couleur | Conversion RGB vers YCbCr | OK |
     | 2 | Sous-échantillonnage | Réduction des chrominances Cb/Cr | OK |
-    | 3 | Découpage en blocs | Partition en blocs 8x8 pixels | à venir |
+    | 3 | Découpage en blocs | Partition en blocs 8x8 pixels | OK |
     | 4 | DCT | Transformée en cosinus discrète | à venir |
     | 5 | Quantification | Suppression des hautes fréquences | à venir |
     | 6 | Codage entropique | Huffman + RLE | à venir |
@@ -501,11 +501,160 @@ def _(mo: ModuleType, sampling_mode: marimo.ui.radio) -> None:
 @app.cell
 def _(mo: ModuleType) -> None:
     mo.md("""
-    ## Etape 3 : Découpage en blocs 8x8 - *à venir*
-
-    Partition de chaque canal en blocs de 8x8 pixels.
-    C'est l'unite de traitement atomique de JPEG.
+    ## Étape 3 : Découpage en blocs 8x8
     """)
+    return
+
+
+@app.function
+def split_into_blocks(channel: "ndarray", block_size: int = 8) -> "ndarray":
+    """Découpe un canal 2D en blocs block_size x block_size.
+
+    Retourne un tableau (n_h, n_w, block_size, block_size).
+    Les pixels en bordure hors multiple de block_size sont ignorés.
+    """
+    H, W = channel.shape
+    n_h, n_w = H // block_size, W // block_size
+    return (
+        channel[:n_h * block_size, :n_w * block_size]
+        .reshape(n_h, block_size, n_w, block_size)
+        .transpose(0, 2, 1, 3)
+    )
+
+
+@app.cell
+def _(mo: ModuleType) -> tuple[Callable[[], int], Callable[[int], None]]:
+    get_block_idx: "Callable[[], int]"
+    set_block_idx: "Callable[[int], None]"
+    get_block_idx, set_block_idx = mo.state(0)
+    return get_block_idx, set_block_idx
+
+
+@app.cell
+def _(
+    get_block_idx: Callable[[], int],
+    image: ndarray,
+    mo: ModuleType,
+    set_block_idx: Callable[[int], None],
+) -> None:
+    _h: "int"
+    _w: "int"
+    _h, _w = image.shape[:2]
+    _n_blocks: "int" = (_h // 8) * (_w // 8)
+    _current: "int" = get_block_idx()
+
+    _slider = mo.ui.slider(
+        0, _n_blocks - 1,
+        value=_current,
+        label="Bloc sélectionné",
+        on_change=set_block_idx,
+    )
+    def _on_prev(_val: int) -> None:
+        set_block_idx(max(0, get_block_idx() - 1))
+
+    def _on_next(_val: int) -> None:
+        set_block_idx(min(_n_blocks - 1, get_block_idx() + 1))
+
+    _btn_prev = mo.ui.button(label="◀", on_click=_on_prev)
+    _btn_next = mo.ui.button(label="▶", on_click=_on_next)
+    mo.hstack([_btn_prev, _slider, _btn_next], justify="start")
+    return
+
+
+@app.cell
+def _(
+    get_block_idx: Callable[[], int],
+    image: ndarray,
+    mo: ModuleType,
+    plt: ModuleType,
+    rgb_to_ycbcr: Callable[[ndarray], ndarray],
+) -> None:
+    import matplotlib.patches as _patches
+
+    _ycbcr: "ndarray" = rgb_to_ycbcr(image)
+    _Y: "ndarray" = _ycbcr[..., 0]
+    _h: "int"
+    _w: "int"
+    _h, _w = _Y.shape
+    _n_w: "int" = _w // 8
+    _n_h: "int" = _h // 8
+
+    _idx: "int" = get_block_idx()
+    _block_row: "int" = _idx // _n_w
+    _block_col: "int" = _idx % _n_w
+    _by: "int" = _block_row * 8
+    _bx: "int" = _block_col * 8
+    _block: "ndarray" = _Y[_by:_by + 8, _bx:_bx + 8]
+
+    _fig = plt.figure(figsize=(12, 9), layout="constrained", dpi=150)
+    _sfs = _fig.subfigures(2, 1, height_ratios=[5, 4])
+
+    # Canal Y complet avec grille de blocs 8×8 et rectangle sur le bloc sélectionné
+    _ax0 = _sfs[0].add_subplot(1, 1, 1)
+    _ax0.imshow(_Y, cmap="gray", vmin=16, vmax=235, interpolation="nearest")
+    for _x in range(0, _w, 8):
+        _ax0.axvline(_x - 0.5, color="white", linewidth=0.4, alpha=0.5)
+    for _y in range(0, _h, 8):
+        _ax0.axhline(_y - 0.5, color="white", linewidth=0.4, alpha=0.5)
+    _ax0.add_patch(_patches.Rectangle(
+        (_bx - 0.5, _by - 0.5), 8, 8,
+        linewidth=2, edgecolor="#ff6600", facecolor="none",
+    ))
+    _ax0.set_title(
+        f"Canal Y — grille {_n_h}x{_n_w} blocs — bloc {_idx} "
+        f"[ligne {_block_row}, col {_block_col}]",
+        fontsize=10,
+    )
+    _ax0.axis("off")
+
+    # Zoom sur le bloc | heatmap avec valeurs numériques
+    for _i, (_title, _show_vals) in enumerate([
+        ("Bloc sélectionné", False),
+        ("Valeurs Y", True),
+    ]):
+        _ax = _sfs[1].add_subplot(1, 2, _i + 1)
+        _ax.imshow(_block, cmap="gray", vmin=16, vmax=235, interpolation="nearest")
+        if _show_vals:
+            for _r in range(8):
+                for _c in range(8):
+                    _val = int(round(float(_block[_r, _c])))
+                    _ax.text(
+                        _c, _r, str(_val), ha="center", va="center",
+                        fontsize=6, fontweight="bold",
+                        # blanc sur foncé (< 128), noir sur clair
+                        color="white" if _val < 128 else "black",
+                    )
+        _ax.set_title(_title, fontsize=10)
+        _ax.axis("off")
+
+    _fig.suptitle(
+        f"Découpage en blocs 8x8 — bloc {_idx} / {_n_h * _n_w - 1}",
+        fontsize=13, fontweight="bold",
+    )
+    _out = mo.as_html(_fig)
+    plt.close(_fig)
+    mo.output.replace(_out)
+    return
+
+
+@app.cell
+def _(image: ndarray, mo: ModuleType) -> None:
+    _h: "int"
+    _w: "int"
+    _h, _w = image.shape[:2]
+    _n_h: "int" = _h // 8
+    _n_w: "int" = _w // 8
+    mo.callout(mo.md(f"""
+    **Pourquoi des blocs 8×8 ?**
+
+    La DCT (étape suivante) travaille sur des blocs de taille fixe. La taille 8×8 est un compromis :
+    des blocs plus petits perdraient la cohérence spatiale des fréquences ; des blocs plus grands
+    augmenteraient la complexité sans gain perceptible — l'œil humain discrimine mal les variations
+    spatiales au-delà d'environ 8 cycles par degré visuel.
+
+    Sur cette image ({_w}×{_h} px), le canal Y produit **{_n_h}×{_n_w} = {_n_h * _n_w} blocs**.
+    Chaque canal Y, Cb, Cr est traité **indépendamment**, bloc par bloc.
+    """), kind="info")
     return
 
 
