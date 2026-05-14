@@ -16,7 +16,7 @@ def _():
 
 
 @app.cell
-def _(np: ModuleType) -> tuple[Callable[[ndarray, str], tuple[list[ndarray], list[str], list[str], list[tuple[int, int]]]]]:
+def _(np: ModuleType) -> tuple[Callable]:
     def rgb_to_ycbcr(img: "ndarray") -> "ndarray":
         """Conversion RGB → YCbCr selon la norme ITU-R BT.601."""
         r: ndarray = img[..., 0].astype(float)
@@ -27,29 +27,51 @@ def _(np: ModuleType) -> tuple[Callable[[ndarray, str], tuple[list[ndarray], lis
         Cr: ndarray = 128 + (112.0   * r -  93.786 * g - 18.214 * b) / 255.0
         return np.stack([Y, Cb, Cr], axis=-1)
 
+    def ycbcr_to_rgb(Y: "ndarray", Cb: "ndarray", Cr: "ndarray") -> "ndarray":
+        """Conversion inverse YCbCr → RGB selon ITU-R BT.601."""
+        r = 1.164 * (Y - 16) + 1.596 * (Cr - 128)
+        g = 1.164 * (Y - 16) - 0.813 * (Cr - 128) - 0.392 * (Cb - 128)
+        b = 1.164 * (Y - 16) + 2.017 * (Cb - 128)
+        return np.clip(np.stack([r, g, b], axis=-1), 0, 255).astype(np.uint8)
+
     def get_channels(
         img: "ndarray",
         space: str,
-    ) -> "tuple[list[ndarray], list[str], list[str], list[tuple[int, int]]]":
-        """Retourne (canaux, noms, colormaps, plages) pour le modèle colorimétrique donné."""
-        channels: list[ndarray]
-        names: list[str]
-        cmaps: list[str]
-        ranges: list[tuple[int, int]]
+    ) -> "tuple[list[ndarray], list[str], list, list[tuple[int, int]], list[ndarray]]":
+        """Retourne (canaux_affichage, noms, colormaps, plages, scalaires_bruts)."""
         if space == "RGB":
-            channels = [img[..., 0].astype(float),
-                        img[..., 1].astype(float),
-                        img[..., 2].astype(float)]
-            names  = ["R - Rouge", "G - Vert", "B - Bleu"]
-            cmaps  = ["Reds", "Greens", "Blues"]
-            ranges = [(0, 255), (0, 255), (0, 255)]
+            r_ch = np.zeros((*img.shape[:2], 3), dtype=np.uint8)
+            r_ch[..., 0] = img[..., 0]
+            g_ch = np.zeros((*img.shape[:2], 3), dtype=np.uint8)
+            g_ch[..., 1] = img[..., 1]
+            b_ch = np.zeros((*img.shape[:2], 3), dtype=np.uint8)
+            b_ch[..., 2] = img[..., 2]
+            channels = [r_ch, g_ch, b_ch]
+            names    = ["R - Rouge", "G - Vert", "B - Bleu"]
+            cmaps    = [None, None, None]
+            ranges   = [(0, 255), (0, 255), (0, 255)]
+            scalars  = [img[..., i].astype(float) for i in range(3)]
         else:  # YCbCr
+            from matplotlib.colors import LinearSegmentedColormap
             ycbcr: ndarray = rgb_to_ycbcr(img)
+            # Couleurs aux extrêmes et au centre (128=neutre) calculées depuis
+            # ycbcr_to_rgb(Y=128, autre_chroma=128, canal_varié=valeur)
+            cb_cmap = LinearSegmentedColormap.from_list("Cb_BT601", [
+                (130/255, 174/255,   0/255),  # Cb=16  → jaune-vert
+                (130/255, 130/255, 130/255),  # Cb=128 → gris neutre
+                (130/255,  86/255, 255/255),  # Cb=240 → bleu vif
+            ])
+            cr_cmap = LinearSegmentedColormap.from_list("Cr_BT601", [
+                (  0/255, 221/255, 130/255),  # Cr=16  → cyan-vert
+                (130/255, 130/255, 130/255),  # Cr=128 → gris neutre
+                (255/255,  39/255, 130/255),  # Cr=240 → rouge vif
+            ])
             channels = [ycbcr[..., 0], ycbcr[..., 1], ycbcr[..., 2]]
             names    = ["Y - Luminance", "Cb - Chroma bleue", "Cr - Chroma rouge"]
-            cmaps    = ["gray", "RdBu", "RdYlBu_r"]
+            cmaps    = ["gray", cb_cmap, cr_cmap]
             ranges   = [(16, 235), (16, 240), (16, 240)]
-        return channels, names, cmaps, ranges
+            scalars  = [ycbcr[..., i] for i in range(3)]
+        return channels, names, cmaps, ranges, scalars
 
     return (get_channels,)
 
@@ -108,18 +130,14 @@ def _(mo: ModuleType) -> tuple[marimo.ui.radio, marimo.ui.checkbox]:
 @app.cell
 def _(
     color_space: marimo.ui.radio,
-    get_channels: Callable[[ndarray, str], tuple[list[ndarray], list[str], list[str], list[tuple[int, int]]]],
+    get_channels: Callable,
     image: ndarray,
     mo: ModuleType,
     np: ModuleType,
     plt: ModuleType,
     show_hist: marimo.ui.checkbox,
 ) -> None:
-    _channels: "list[ndarray]"
-    _names: "list[str]"
-    _cmaps: "list[str]"
-    _ranges: "list[tuple[int, int]]"
-    _channels, _names, _cmaps, _ranges = get_channels(image, color_space.value)
+    _channels, _names, _cmaps, _ranges, _scalars = get_channels(image, color_space.value)
     _hist_colors: dict[str, list[str]] = {
         "RGB":   ["#cc3333", "#33aa33", "#3333cc"],
         "YCbCr": ["#555555", "#4169e1", "#dc143c"],
@@ -148,25 +166,28 @@ def _(
         zip(_channels, _names, _cmaps, _ranges)
     ):
         _ax_ch = _sfs[1].add_subplot(1, 3, _i + 1)
-        _im = _ax_ch.imshow(_ch, cmap=_cmap, vmin=_vmin, vmax=_vmax)
+        if _cmap is None:
+            _im = _ax_ch.imshow(_ch)
+        else:
+            _im = _ax_ch.imshow(_ch, cmap=_cmap, vmin=_vmin, vmax=_vmax)
+            _sfs[1].colorbar(_im, ax=_ax_ch, fraction=0.046, pad=0.04, location="left")
         _ax_ch.set_title(_name, fontsize=10)
         _ax_ch.axis("off")
-        _sfs[1].colorbar(_im, ax=_ax_ch, fraction=0.046, pad=0.04, location="left")
         _ax_ch.text(
             0.5, -0.03,
-            f"min={float(np.min(_ch)):.1f}  max={float(np.max(_ch)):.1f}",
+            f"min={float(np.min(_scalars[_i])):.1f}  max={float(np.max(_scalars[_i])):.1f}",
             ha="center", va="top", transform=_ax_ch.transAxes,
             fontsize=8, color="#555555", clip_on=False,
         )
 
     # Ligne 2 : histogrammes optionnels
     if show_hist.value:
-        for _i, (_ch, _, _, (_vmin, _vmax)) in enumerate(
-            zip(_channels, _names, _cmaps, _ranges)
+        for _i, (_, _, (_vmin, _vmax)) in enumerate(
+            zip(_names, _cmaps, _ranges)
         ):
             _ax_h = _sfs[2].add_subplot(1, 3, _i + 1)
             _ax_h.hist(
-                _ch.ravel(), bins=64, range=(_vmin, _vmax),
+                _scalars[_i].ravel(), bins=64, range=(_vmin, _vmax),
                 color=_hc[_i], edgecolor="none", alpha=0.85,
             )
             _ax_h.set_xlim(_vmin, _vmax)
