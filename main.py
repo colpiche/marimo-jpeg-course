@@ -1,5 +1,6 @@
 import marimo
 from collections.abc import Callable
+from matplotlib.colors import LinearSegmentedColormap
 from numpy import ndarray
 from types import ModuleType
 
@@ -16,8 +17,10 @@ def _():
 
 
 @app.cell
-def _(np: ModuleType) -> tuple[Callable]:
-    from matplotlib.colors import LinearSegmentedColormap
+def _(np: ModuleType) -> tuple[
+    Callable[[ndarray, str], tuple[list[ndarray], list[str], list[str | LinearSegmentedColormap], list[tuple[int, int]]]],
+    Callable[[ndarray, ndarray, ndarray], ndarray],
+]:
 
     # Matrice ITU-R BT.601 : lignes = (Y, Cb, Cr), colonnes = (R, G, B).
     # Divisée par 255 pour opérer directement sur des uint8 convertis en float.
@@ -31,16 +34,16 @@ def _(np: ModuleType) -> tuple[Callable]:
     _OFF = np.array([16.0, 128.0, 128.0])
 
     def rgb_to_ycbcr(img: "ndarray") -> "ndarray":
-        """Convertit une image RGB uint8 (H×W×3) en YCbCr float selon ITU-R BT.601.
+        """Convertit une image RGB uint8 (HxWx3) en YCbCr float selon ITU-R BT.601.
 
         Plages de sortie : Y ∈ [16, 235], Cb ∈ [16, 240], Cr ∈ [16, 240].
         """
 
-        # @ _M.T applique la combinaison linéaire sur le dernier axe (H×W×3).
+        # @ _M.T applique la combinaison linéaire sur le dernier axe (HxWx3).
         return img.astype(float) @ _M.T + _OFF
 
     def ycbcr_to_rgb(Y: "ndarray", Cb: "ndarray", Cr: "ndarray") -> "ndarray":
-        """Convertit trois canaux YCbCr float en une image RGB uint8 (H×W×3).
+        """Convertit trois canaux YCbCr float en une image RGB uint8 (HxWx3).
 
         Inverse de rgb_to_ycbcr. Accepte des tableaux 2D de même forme pour Y, Cb, Cr.
         """
@@ -56,7 +59,7 @@ def _(np: ModuleType) -> tuple[Callable]:
     # RGB   : dégradé noir → couleur primaire (0 = canal absent, 255 = saturation pleine).
     # YCbCr : 3 ancres par canal (min=16, neutre=128, max=240) calculées avec
     # ycbcr_to_rgb(Y=128, autre_chroma=128) pour refléter la teinte réellement encodée.
-    _CMAPS = {
+    _CMAPS: dict[str, list[str | LinearSegmentedColormap]] = {
         "RGB": [
             LinearSegmentedColormap.from_list("R", [(0, 0, 0), (1, 0, 0)]),
             LinearSegmentedColormap.from_list("G", [(0, 0, 0), (0, 1, 0)]),
@@ -81,7 +84,7 @@ def _(np: ModuleType) -> tuple[Callable]:
         """Décompose une image RGB uint8 en ses trois canaux scalaires 2D.
 
         Retourne (channels, names, cmaps, ranges) où :
-        - channels : liste de 3 tableaux float 2D (H×W), un par canal
+        - channels : liste de 3 tableaux float 2D (HxW), un par canal
         - names    : étiquettes des canaux
         - cmaps    : colormaps matplotlib associées (depuis _CMAPS)
         - ranges   : plages (vmin, vmax) pour la normalisation de l'affichage
@@ -99,12 +102,12 @@ def _(np: ModuleType) -> tuple[Callable]:
 
         return channels, names, _CMAPS[space], ranges
 
-    return (get_channels,)
+    return (get_channels, ycbcr_to_rgb)
 
 
 @app.cell
 def _(np: ModuleType) -> tuple[ndarray]:
-    from scipy import datasets as _datasets
+    from scipy import datasets as _datasets   # type: ignore[import-untyped]
     _img_full: "ndarray" = _datasets.face()   # 768x1024 RGB uint8
     image: "ndarray" = _img_full[::2, ::2]    # -> 384x512, plus fluide en UI
     return (image,)
@@ -156,7 +159,7 @@ def _(mo: ModuleType) -> tuple[marimo.ui.radio, marimo.ui.checkbox]:
 @app.cell
 def _(
     color_space: marimo.ui.radio,
-    get_channels: Callable,
+    get_channels: Callable[[ndarray, str], tuple[list[ndarray], list[str], list[str | LinearSegmentedColormap], list[tuple[int, int]]]],
     image: ndarray,
     mo: ModuleType,
     np: ModuleType,
