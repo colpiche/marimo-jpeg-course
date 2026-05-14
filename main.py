@@ -17,61 +17,87 @@ def _():
 
 @app.cell
 def _(np: ModuleType) -> tuple[Callable]:
+    from matplotlib.colors import LinearSegmentedColormap
+
+    # Matrice ITU-R BT.601 : lignes = (Y, Cb, Cr), colonnes = (R, G, B).
+    # Divisée par 255 pour opérer directement sur des uint8 convertis en float.
+    _M = np.array([
+        [ 65.481, 128.553,  24.966],
+        [-37.797, -74.203, 112.000],
+        [112.000, -93.786, -18.214],
+    ]) / 255.0
+
+    # Offsets CCIR : Y démarre à 16 (headroom bas réservé), Cb/Cr centrés à 128 (valeur neutre).
+    _OFF = np.array([16.0, 128.0, 128.0])
+
     def rgb_to_ycbcr(img: "ndarray") -> "ndarray":
-        """Conversion RGB → YCbCr selon la norme ITU-R BT.601."""
-        r: ndarray = img[..., 0].astype(float)
-        g: ndarray = img[..., 1].astype(float)
-        b: ndarray = img[..., 2].astype(float)
-        Y: ndarray  =  16 + ( 65.481 * r + 128.553 * g + 24.966 * b) / 255.0
-        Cb: ndarray = 128 + (-37.797 * r -  74.203 * g + 112.0  * b) / 255.0
-        Cr: ndarray = 128 + (112.0   * r -  93.786 * g - 18.214 * b) / 255.0
-        return np.stack([Y, Cb, Cr], axis=-1)
+        """Convertit une image RGB uint8 (H×W×3) en YCbCr float selon ITU-R BT.601.
+
+        Plages de sortie : Y ∈ [16, 235], Cb ∈ [16, 240], Cr ∈ [16, 240].
+        """
+
+        # @ _M.T applique la combinaison linéaire sur le dernier axe (H×W×3).
+        return img.astype(float) @ _M.T + _OFF
 
     def ycbcr_to_rgb(Y: "ndarray", Cb: "ndarray", Cr: "ndarray") -> "ndarray":
-        """Conversion inverse YCbCr → RGB selon ITU-R BT.601."""
-        r = 1.164 * (Y - 16) + 1.596 * (Cr - 128)
-        g = 1.164 * (Y - 16) - 0.813 * (Cr - 128) - 0.392 * (Cb - 128)
-        b = 1.164 * (Y - 16) + 2.017 * (Cb - 128)
+        """Convertit trois canaux YCbCr float en une image RGB uint8 (H×W×3).
+
+        Inverse de rgb_to_ycbcr. Accepte des tableaux 2D de même forme pour Y, Cb, Cr.
+        """
+
+        r = 1.164*(Y - 16) + 1.596*(Cr - 128)
+        g = 1.164*(Y - 16) - 0.813*(Cr - 128) - 0.392*(Cb - 128)
+        b = 1.164*(Y - 16) + 2.017*(Cb - 128)
+
+        # Le clip est nécessaire : les couleurs en bord de gamme YCbCr peuvent
+        # produire des valeurs RGB hors de [0, 255].
         return np.clip(np.stack([r, g, b], axis=-1), 0, 255).astype(np.uint8)
 
-    def get_channels(
-        img: "ndarray",
-        space: str,
-    ) -> "tuple[list[ndarray], list[str], list, list[tuple[int, int]], list[ndarray]]":
-        """Retourne (canaux_affichage, noms, colormaps, plages, scalaires_bruts)."""
+    # RGB   : dégradé noir → couleur primaire (0 = canal absent, 255 = saturation pleine).
+    # YCbCr : 3 ancres par canal (min=16, neutre=128, max=240) calculées avec
+    # ycbcr_to_rgb(Y=128, autre_chroma=128) pour refléter la teinte réellement encodée.
+    _CMAPS = {
+        "RGB": [
+            LinearSegmentedColormap.from_list("R", [(0, 0, 0), (1, 0, 0)]),
+            LinearSegmentedColormap.from_list("G", [(0, 0, 0), (0, 1, 0)]),
+            LinearSegmentedColormap.from_list("B", [(0, 0, 0), (0, 0, 1)]),
+        ],
+        "YCbCr": [
+            "gray",
+            LinearSegmentedColormap.from_list("Cb_BT601", [
+                (130/255, 174/255,   0/255),  # Cb=16  : jaune-vert
+                (130/255, 130/255, 130/255),  # Cb=128 : gris neutre
+                (130/255,  86/255, 255/255),  # Cb=240 : bleu vif
+            ]),
+            LinearSegmentedColormap.from_list("Cr_BT601", [
+                (  0/255, 221/255, 130/255),  # Cr=16  : cyan-vert
+                (130/255, 130/255, 130/255),  # Cr=128 : gris neutre
+                (255/255,  39/255, 130/255),  # Cr=240 : rouge vif
+            ]),
+        ],
+    }
+
+    def get_channels(img: "ndarray", space: str):
+        """Décompose une image RGB uint8 en ses trois canaux scalaires 2D.
+
+        Retourne (channels, names, cmaps, ranges) où :
+        - channels : liste de 3 tableaux float 2D (H×W), un par canal
+        - names    : étiquettes des canaux
+        - cmaps    : colormaps matplotlib associées (depuis _CMAPS)
+        - ranges   : plages (vmin, vmax) pour la normalisation de l'affichage
+        """
+
         if space == "RGB":
-            r_ch = np.zeros((*img.shape[:2], 3), dtype=np.uint8)
-            r_ch[..., 0] = img[..., 0]
-            g_ch = np.zeros((*img.shape[:2], 3), dtype=np.uint8)
-            g_ch[..., 1] = img[..., 1]
-            b_ch = np.zeros((*img.shape[:2], 3), dtype=np.uint8)
-            b_ch[..., 2] = img[..., 2]
-            channels = [r_ch, g_ch, b_ch]
+            channels = [img[..., i].astype(float) for i in range(3)]
             names    = ["R - Rouge", "G - Vert", "B - Bleu"]
-            cmaps    = [None, None, None]
-            ranges   = [(0, 255), (0, 255), (0, 255)]
-            scalars  = [img[..., i].astype(float) for i in range(3)]
-        else:  # YCbCr
-            from matplotlib.colors import LinearSegmentedColormap
-            ycbcr: ndarray = rgb_to_ycbcr(img)
-            # Couleurs aux extrêmes et au centre (128=neutre) calculées depuis
-            # ycbcr_to_rgb(Y=128, autre_chroma=128, canal_varié=valeur)
-            cb_cmap = LinearSegmentedColormap.from_list("Cb_BT601", [
-                (130/255, 174/255,   0/255),  # Cb=16  → jaune-vert
-                (130/255, 130/255, 130/255),  # Cb=128 → gris neutre
-                (130/255,  86/255, 255/255),  # Cb=240 → bleu vif
-            ])
-            cr_cmap = LinearSegmentedColormap.from_list("Cr_BT601", [
-                (  0/255, 221/255, 130/255),  # Cr=16  → cyan-vert
-                (130/255, 130/255, 130/255),  # Cr=128 → gris neutre
-                (255/255,  39/255, 130/255),  # Cr=240 → rouge vif
-            ])
-            channels = [ycbcr[..., 0], ycbcr[..., 1], ycbcr[..., 2]]
+            ranges   = [(0, 255)] * 3
+        else:
+            ycbcr = rgb_to_ycbcr(img)
+            channels = [ycbcr[..., i] for i in range(3)]
             names    = ["Y - Luminance", "Cb - Chroma bleue", "Cr - Chroma rouge"]
-            cmaps    = ["gray", cb_cmap, cr_cmap]
             ranges   = [(16, 235), (16, 240), (16, 240)]
-            scalars  = [ycbcr[..., i] for i in range(3)]
-        return channels, names, cmaps, ranges, scalars
+
+        return channels, names, _CMAPS[space], ranges
 
     return (get_channels,)
 
@@ -137,7 +163,7 @@ def _(
     plt: ModuleType,
     show_hist: marimo.ui.checkbox,
 ) -> None:
-    _channels, _names, _cmaps, _ranges, _scalars = get_channels(image, color_space.value)
+    _channels, _names, _cmaps, _ranges = get_channels(image, color_space.value)
     _hist_colors: dict[str, list[str]] = {
         "RGB":   ["#cc3333", "#33aa33", "#3333cc"],
         "YCbCr": ["#555555", "#4169e1", "#dc143c"],
@@ -146,13 +172,16 @@ def _(
 
     _row_h: float = 4.0
     _hist_h: float = 2.0
+
+    # 2 sous-figures (originale + canaux) ou 3 si les histogrammes sont activés.
     _n_sfs: int = 3 if show_hist.value else 2
     _h_ratios: list[float] = [_row_h, _row_h, _hist_h] if show_hist.value else [_row_h, _row_h]
     _fig_h: float = 2 * _row_h + (_hist_h if show_hist.value else 0.0) + 0.6
     _fig = plt.figure(figsize=(12, _fig_h), layout="constrained")
     _sfs = _fig.subfigures(_n_sfs, 1, height_ratios=_h_ratios)
 
-    # Ligne 0 : image originale centrée (layout isolé des colorbars de la ligne 1)
+    # L'originale occupe la colonne centrale (pos. 2/3) pour s'aligner visuellement
+    # avec les trois canaux affichés dans la sous-figure du dessous.
     _ax_orig = _sfs[0].add_subplot(1, 3, 2)
     _ax_orig.imshow(image)
     _ax_orig.set_title(
@@ -166,28 +195,26 @@ def _(
         zip(_channels, _names, _cmaps, _ranges)
     ):
         _ax_ch = _sfs[1].add_subplot(1, 3, _i + 1)
-        if _cmap is None:
-            _im = _ax_ch.imshow(_ch)
-        else:
-            _im = _ax_ch.imshow(_ch, cmap=_cmap, vmin=_vmin, vmax=_vmax)
-            _sfs[1].colorbar(_im, ax=_ax_ch, fraction=0.046, pad=0.04, location="left")
+        _im = _ax_ch.imshow(_ch, cmap=_cmap, vmin=_vmin, vmax=_vmax)
+        # Colorbar à gauche pour ne pas empiéter sur le titre du subplot voisin.
+        _sfs[1].colorbar(_im, ax=_ax_ch, fraction=0.046, pad=0.04, location="left")
         _ax_ch.set_title(_name, fontsize=10)
         _ax_ch.axis("off")
         _ax_ch.text(
             0.5, -0.03,
-            f"min={float(np.min(_scalars[_i])):.1f}  max={float(np.max(_scalars[_i])):.1f}",
+            f"min={float(np.min(_ch)):.1f}  max={float(np.max(_ch)):.1f}",
             ha="center", va="top", transform=_ax_ch.transAxes,
             fontsize=8, color="#555555", clip_on=False,
         )
 
     # Ligne 2 : histogrammes optionnels
     if show_hist.value:
-        for _i, (_, _, (_vmin, _vmax)) in enumerate(
-            zip(_names, _cmaps, _ranges)
+        for _i, (_ch, _, (_vmin, _vmax)) in enumerate(
+            zip(_channels, _names, _ranges)
         ):
             _ax_h = _sfs[2].add_subplot(1, 3, _i + 1)
             _ax_h.hist(
-                _scalars[_i].ravel(), bins=64, range=(_vmin, _vmax),
+                _ch.ravel(), bins=64, range=(_vmin, _vmax),
                 color=_hc[_i], edgecolor="none", alpha=0.85,
             )
             _ax_h.set_xlim(_vmin, _vmax)
@@ -202,7 +229,7 @@ def _(
     )
     _out = mo.as_html(_fig)
     plt.close(_fig)
-    mo.output.replace(_out)
+    mo.output.replace(_out)  # replace() évite l'accumulation de figures à chaque ré-exécution réactive
     return
 
 
