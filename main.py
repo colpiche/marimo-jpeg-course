@@ -358,7 +358,7 @@ def _(
     sampling_mode: marimo.ui.radio,
     ycbcr_to_rgb: Callable[[ndarray, ndarray, ndarray], ndarray],
 ) -> None:
-    # Patch synthétique 8x8 : Y uniforme (128), Cb/Cr aléatoires sur toute la plage [16, 240].
+    # Bruit 8x8 : Y uniforme (128), Cb/Cr aléatoires sur toute la plage [16, 240].
     # Couleurs maximalement saturées → l'effet du sous-échantillonnage est immédiatement visible.
     _rng = np.random.default_rng(42)
     _Y_p: "ndarray"  = _rng.uniform(16.0, 235.0, (8, 8))
@@ -366,17 +366,11 @@ def _(
     _Cr_p: "ndarray" = _rng.uniform(16.0, 240.0, (8, 8))
     _patch: "ndarray" = ycbcr_to_rgb(_Y_p, _Cb_p, _Cr_p)
 
-    _ycbcr_p: "ndarray" = rgb_to_ycbcr(_patch)
-    _Yp: "ndarray"
-    _Cb_subp: "ndarray"
-    _Cr_subp: "ndarray"
-    _Yp, _Cb_subp, _Cr_subp = chroma_subsample(_ycbcr_p, sampling_mode.value)
-    _ycbcr_up_p: "ndarray" = chroma_upsample(_Yp, _Cb_subp, _Cr_subp, sampling_mode.value)
-    _rec_patch: "ndarray" = ycbcr_to_rgb(
-        _ycbcr_up_p[..., 0], _ycbcr_up_p[..., 1], _ycbcr_up_p[..., 2]
-    )
+    # Crop 8x8 centré : pixel central ± 4 dans chaque axe.
+    _H, _W = image.shape[:2]
+    _cy, _cx = _H // 2, _W // 2
+    _crop: "ndarray" = image[_cy - 4:_cy + 4, _cx - 4:_cx + 4]
 
-    # Pas de grille (en pixels) pour les canaux chrominance selon le mode
     _block_label: "str" = {"4:4:4": "1x1", "4:2:2": "2x1", "4:2:0": "2x2"}[sampling_mode.value]
     _gs_w: "int" = {"4:4:4": 1, "4:2:2": 2, "4:2:0": 2}[sampling_mode.value]
     _gs_h: "int" = {"4:4:4": 1, "4:2:2": 1, "4:2:0": 2}[sampling_mode.value]
@@ -394,36 +388,75 @@ def _(
         (255/255,  39/255, 130/255),
     ])
 
-    _fig = plt.figure(figsize=(12, 9), layout="constrained", dpi=200)
-    _sfs = _fig.subfigures(2, 1, height_ratios=[5.0, 4.0])
+    _fig = plt.figure(figsize=(12, 24), layout="constrained", dpi=200)
+    # height_ratios sections = somme des ratios internes de chaque section (4+4=8, 4+4+5=13).
+    # Garantit que les lignes de ratio 4 ont la même hauteur absolue dans les deux sections.
+    _sections = _fig.subfigures(2, 1, hspace=0.15, height_ratios=[8, 13])
 
-    # Ligne 0 : patch original | reconstruit
-    for _i, (_img, _title) in enumerate([
-        (_patch,     "Original — patch 8x8 px"),
-        (_rec_patch, f"Reconstruit ({sampling_mode.value})"),
+    for _row_idx, (_src, _section_title) in enumerate([
+        (_patch, "Exemple synthétique — bruit aléatoire en YCbCr"),
+        (_crop,  "Image originale — crop 8x8 px central"),
     ]):
-        _ax = _sfs[0].add_subplot(1, 2, _i + 1)
-        # interpolation="nearest" : chaque pixel source = rectangle plein, sans lissage
-        _ax.imshow(_img, interpolation="nearest")
-        _ax.set_title(_title, fontsize=10)
-        _ax.axis("off")
+        _section = _sections[_row_idx]
+        _section.suptitle(_section_title, fontsize=11, fontweight="bold")
+        # Section 2 : 3 sous-figures (8x8 avant/après, canaux, image complète avant/après).
+        _sfs = _section.subfigures(
+            3 if _row_idx == 1 else 2, 1,
+            height_ratios=[4.0, 4.0, 5.0] if _row_idx == 1 else [4.0, 4.0],
+        )
 
-    # Ligne 1 : Y (grille 1x1) | Cb (grille selon mode) | Cr (grille selon mode)
-    for _i, (_ch, _cmap, _name, _vmin, _vmax, _gsw, _gsh) in enumerate([
-        (_ycbcr_up_p[..., 0], "gray",   "Y — Luminance",              16, 235, 1,     1    ),
-        (_ycbcr_up_p[..., 1], _cb_cmap, "Cb — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
-        (_ycbcr_up_p[..., 2], _cr_cmap, "Cr — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
-    ]):
-        _ax = _sfs[1].add_subplot(1, 3, _i + 1)
-        _im = _ax.imshow(_ch, cmap=_cmap, vmin=_vmin, vmax=_vmax, interpolation="nearest")
-        _sfs[1].colorbar(_im, ax=_ax, fraction=0.046, pad=0.04, location="left")
-        _ax.set_title(_name, fontsize=10)
-        _ax.axis("off")
-        # Grille blanche : chaque cellule délimite un bloc (1x1 pour Y, variable pour Cb/Cr)
-        for _x in range(_gsw, _PW, _gsw):
-            _ax.axvline(_x - 0.5, color="white", linewidth=0.8, alpha=0.8)
-        for _y in range(_gsh, _PH, _gsh):
-            _ax.axhline(_y - 0.5, color="white", linewidth=0.8, alpha=0.8)
+        _ycbcr_s: "ndarray" = rgb_to_ycbcr(_src)
+        _Ys: "ndarray"
+        _Cb_s: "ndarray"
+        _Cr_s: "ndarray"
+        _Ys, _Cb_s, _Cr_s = chroma_subsample(_ycbcr_s, sampling_mode.value)
+        _ycbcr_up: "ndarray" = chroma_upsample(_Ys, _Cb_s, _Cr_s, sampling_mode.value)
+        _rec: "ndarray" = ycbcr_to_rgb(
+            _ycbcr_up[..., 0], _ycbcr_up[..., 1], _ycbcr_up[..., 2]
+        )
+
+        for _i, (_img, _title) in enumerate([
+            (_src, "Image de départ"),
+            (_rec, f"Après sous-échantillonnage ({sampling_mode.value})"),
+        ]):
+            _ax = _sfs[0].add_subplot(1, 2, _i + 1)
+            _ax.imshow(_img, interpolation="nearest")
+            _ax.set_title(_title, fontsize=10)
+            _ax.axis("off")
+
+        for _i, (_ch, _cmap, _name, _vmin, _vmax, _gsw, _gsh) in enumerate([
+            (_ycbcr_up[..., 0], "gray",   "Y — Luminance",              16, 235, 1,     1    ),
+            (_ycbcr_up[..., 1], _cb_cmap, "Cb — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
+            (_ycbcr_up[..., 2], _cr_cmap, "Cr — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
+        ]):
+            _ax = _sfs[1].add_subplot(1, 3, _i + 1)
+            _im = _ax.imshow(_ch, cmap=_cmap, vmin=_vmin, vmax=_vmax, interpolation="nearest")
+            _sfs[1].colorbar(_im, ax=_ax, fraction=0.046, pad=0.04, location="left")
+            _ax.set_title(_name, fontsize=10)
+            _ax.axis("off")
+            for _x in range(_gsw, _PW, _gsw):
+                _ax.axvline(_x - 0.5, color="white", linewidth=0.8, alpha=0.8)
+            for _y in range(_gsh, _PH, _gsh):
+                _ax.axhline(_y - 0.5, color="white", linewidth=0.8, alpha=0.8)
+
+        if _row_idx == 1:
+            _ycbcr_full: "ndarray" = rgb_to_ycbcr(image)
+            _Yf: "ndarray"
+            _Cb_sf: "ndarray"
+            _Cr_sf: "ndarray"
+            _Yf, _Cb_sf, _Cr_sf = chroma_subsample(_ycbcr_full, sampling_mode.value)
+            _ycbcr_up_full: "ndarray" = chroma_upsample(_Yf, _Cb_sf, _Cr_sf, sampling_mode.value)
+            _rec_full: "ndarray" = ycbcr_to_rgb(
+                _ycbcr_up_full[..., 0], _ycbcr_up_full[..., 1], _ycbcr_up_full[..., 2]
+            )
+            for _i, (_img, _title) in enumerate([
+                (image,     "Image originale complète"),
+                (_rec_full, f"Après sous-échantillonnage ({sampling_mode.value})"),
+            ]):
+                _ax = _sfs[2].add_subplot(1, 2, _i + 1)
+                _ax.imshow(_img, interpolation="nearest")
+                _ax.set_title(_title, fontsize=10)
+                _ax.axis("off")
 
     _fig.suptitle(
         f"Sous-échantillonnage de la chrominance — mode {sampling_mode.value}\n\n",
