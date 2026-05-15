@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from matplotlib.axes import Axes
     from matplotlib.colors import LinearSegmentedColormap
     from numpy import ndarray
     from types import ModuleType
@@ -983,7 +984,7 @@ def _(
     _n_w: "int" = _w // 8
     _n_h: "int" = _h // 8
     _idx: "int" = get_block_idx()
-    _q: "int" = quality_factor.value
+    _q: "int" = int(quality_factor.value)
     _by: "int" = (_idx // _n_w) * 8
     _bx: "int" = (_idx % _n_w) * 8
 
@@ -1129,7 +1130,7 @@ def _(
     scale_q: Callable[[ndarray, int], ndarray],
     ycbcr_to_rgb: Callable[[ndarray, ndarray, ndarray], ndarray],
 ) -> None:
-    _q_img: "int" = quality_factor.value
+    _q_img: "int" = int(quality_factor.value)
     _ycbcr_f: "ndarray" = rgb_to_ycbcr(image).astype(float)
     _Ql_img: "ndarray" = scale_q(Q_luma,   _q_img)
     _Qc_img: "ndarray" = scale_q(Q_chroma, _q_img)
@@ -1352,7 +1353,7 @@ def _(
     _n_w: "int" = _w // 8
     _n_h: "int" = _h // 8
     _idx: "int" = get_block_idx()
-    _q: "int" = quality_factor.value
+    _q: "int" = int(quality_factor.value)
     _by: "int" = (_idx // _n_w) * 8
     _bx: "int" = (_idx % _n_w) * 8
 
@@ -1371,8 +1372,8 @@ def _(
         figsize=(12, 9), layout="constrained", dpi=150,
         width_ratios=[1, 1, 1], height_ratios=[1.2, 1],
     )
-    _ax_b: "plt.Axes" = _axd["block"]
-    _ax_s: "plt.Axes" = _axd["seq"]
+    _ax_b: "Axes" = _axd["block"]
+    _ax_s: "Axes" = _axd["seq"]
 
     # Panneau gauche : coefficients + chemin zigzag
     _ax_b.imshow(np.abs(_Cq), cmap="plasma", vmin=0, vmax=200, interpolation="nearest")
@@ -1469,7 +1470,7 @@ def _(
     _h2, _w2 = _Y2.shape
     _n_w2: "int" = _w2 // 8
     _idx2: "int" = get_block_idx()
-    _q2: "int" = quality_factor.value
+    _q2: "int" = int(quality_factor.value)
     _by2: "int" = (_idx2 // _n_w2) * 8
     _bx2: "int" = (_idx2 % _n_w2) * 8
 
