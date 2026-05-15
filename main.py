@@ -137,7 +137,7 @@ def _(mo: ModuleType) -> None:
     | 2 | Sous-échantillonnage | Réduction des chrominances Cb/Cr | OK |
     | 3 | Découpage en blocs | Partition en blocs 8x8 pixels | OK |
     | 4 | DCT | Transformée en cosinus discrète | OK |
-    | 5 | Quantification | Suppression des hautes fréquences | à venir |
+    | 5 | Quantification | Suppression des hautes fréquences | OK |
     | 6 | Codage entropique | Huffman + RLE | à venir |
     """)
     return
@@ -867,12 +867,356 @@ def _(mo: ModuleType) -> None:
 
 @app.cell
 def _(mo: ModuleType) -> None:
-    mo.md("""
-    ## Etape 5 : Quantification - *à venir*
+    mo.md("## Étape 5 : Quantification")
+    return
 
-    Division des coefficients DCT par une table de quantification.
-    Les hautes fréquences (peu perceptibles) sont fortement réduites ou annulées.
-    """)
+
+@app.cell
+def _(mo: ModuleType) -> tuple[marimo.ui.slider]:
+    quality_factor = mo.ui.slider(
+        1, 100,
+        value=50,
+        label="Facteur de qualité JPEG",
+        show_value=True,
+    )
+    mo.hstack([quality_factor], justify="start")
+    return (quality_factor,)
+
+
+@app.cell
+def _(np: ModuleType) -> tuple[
+    ndarray,
+    ndarray,
+    Callable[[ndarray, int], ndarray],
+]:
+    _Q_LUMA_BASE: "ndarray" = np.array([
+        [16, 11, 10, 16,  24,  40,  51,  61],
+        [12, 12, 14, 19,  26,  58,  60,  55],
+        [14, 13, 16, 24,  40,  57,  69,  56],
+        [14, 17, 22, 29,  51,  87,  80,  62],
+        [18, 22, 37, 56,  68, 109, 103,  77],
+        [24, 35, 55, 64,  81, 104, 113,  92],
+        [49, 64, 78, 87, 103, 121, 120, 101],
+        [72, 92, 95, 98, 112, 100, 103,  99],
+    ], dtype=float)
+
+    _Q_CHROMA_BASE: "ndarray" = np.array([
+        [17, 18, 24, 47, 99, 99, 99, 99],
+        [18, 21, 26, 66, 99, 99, 99, 99],
+        [24, 26, 56, 99, 99, 99, 99, 99],
+        [47, 66, 99, 99, 99, 99, 99, 99],
+        [99, 99, 99, 99, 99, 99, 99, 99],
+        [99, 99, 99, 99, 99, 99, 99, 99],
+        [99, 99, 99, 99, 99, 99, 99, 99],
+        [99, 99, 99, 99, 99, 99, 99, 99],
+    ], dtype=float)
+
+    def scale_q(Q_base: "ndarray", quality: int) -> "ndarray":
+        """Redimensionne une table JPEG selon la formule Annex K (quality ∈ [1, 95]).
+
+        Valeurs de sortie clampées dans [1, 255].
+        """
+        _s: float = 5000.0 / quality if quality < 50 else 200.0 - 2.0 * quality
+        return np.clip(np.floor((Q_base * _s + 50.0) / 100.0), 1.0, 255.0)
+
+    Q_luma:   "ndarray" = _Q_LUMA_BASE
+    Q_chroma: "ndarray" = _Q_CHROMA_BASE
+
+    return Q_luma, Q_chroma, scale_q
+
+
+@app.function
+def reconstruct_channel(
+    channel: "ndarray",
+    Q_scaled: "ndarray",
+    dct2_fn: "Callable[[ndarray], ndarray]",
+    idct2_fn: "Callable[[ndarray], ndarray]",
+) -> "ndarray":
+    """Quantifie et reconstruit un canal 2D complet par blocs 8x8.
+
+    Applique un level-shift de -128 avant la DCT et +128 après l'iDCT,
+    conformément au standard JPEG. Retourne le canal clipé à [0, 255].
+    """
+    import numpy as _np
+    H, W = channel.shape
+    n_h, n_w = H // 8, W // 8
+    _flat: "ndarray" = (
+        (channel[:n_h * 8, :n_w * 8] - 128.0)
+        .reshape(n_h, 8, n_w, 8)
+        .transpose(0, 2, 1, 3)
+        .reshape(-1, 8, 8)
+    )
+    _coeffs: "ndarray" = _np.stack([dct2_fn(b) for b in _flat])
+    _quant:  "ndarray" = _np.round(_coeffs / Q_scaled[_np.newaxis, :, :])
+    _dequant: "ndarray" = _quant * Q_scaled[_np.newaxis, :, :]
+    _recon:  "ndarray" = _np.stack([idct2_fn(d) for d in _dequant]) + 128.0
+    _recon_2d: "ndarray" = (
+        _recon
+        .reshape(n_h, n_w, 8, 8)
+        .transpose(0, 2, 1, 3)
+        .reshape(n_h * 8, n_w * 8)
+    )
+    _out: "ndarray" = channel.copy().astype(float)
+    _out[:n_h * 8, :n_w * 8] = _recon_2d
+    return _np.clip(_out, 0.0, 255.0)
+
+
+@app.cell
+def _(
+    dct2: Callable[[ndarray], ndarray],
+    get_block_idx: Callable[[], int],
+    idct2: Callable[[ndarray], ndarray],
+    image: ndarray,
+    mo: ModuleType,
+    np: ModuleType,
+    plt: ModuleType,
+    quality_factor: marimo.ui.slider,
+    Q_luma: ndarray,
+    rgb_to_ycbcr: Callable[[ndarray], ndarray],
+    scale_q: Callable[[ndarray, int], ndarray],
+) -> None:
+    _ycbcr: "ndarray" = rgb_to_ycbcr(image)
+    _Y: "ndarray" = _ycbcr[..., 0]
+    _h: "int"
+    _w: "int"
+    _h, _w = _Y.shape
+    _n_w: "int" = _w // 8
+    _n_h: "int" = _h // 8
+    _idx: "int" = get_block_idx()
+    _q: "int" = quality_factor.value
+    _by: "int" = (_idx // _n_w) * 8
+    _bx: "int" = (_idx % _n_w) * 8
+
+    _block: "ndarray" = _Y[_by:_by + 8, _bx:_bx + 8].astype(float) - 128.0
+    _C: "ndarray" = dct2(_block)
+    _Ql: "ndarray" = scale_q(Q_luma, _q)
+    _Cq: "ndarray" = np.round(_C / _Ql)
+    _Cdq: "ndarray" = _Cq * _Ql
+    _recon_block: "ndarray" = idct2(_Cdq) + 128.0
+    _err: "ndarray" = (_block + 128.0) - _recon_block
+    _n_nz: "int" = int(np.count_nonzero(_Cq))
+    _err_max: "float" = float(np.max(np.abs(_err)))
+    _err_mean: "float" = float(np.mean(np.abs(_err)))
+
+    # Exemples concrets du seuil Q/2 : un coefficient supprimé, un gardé
+    _example_text: "str" = ""
+    _has_zero: "bool" = bool(((np.abs(_Cq) == 0) & (np.abs(_C) > 0.5)).any())
+    _has_kept: "bool" = bool((np.abs(_Cq) > 0).any())
+    if _has_zero:
+        _iz_arr: "ndarray" = np.argwhere((np.abs(_Cq) == 0) & (np.abs(_C) > 0.5))[0]
+        _iz_r: "int" = int(_iz_arr[0])
+        _iz_c: "int" = int(_iz_arr[1])
+        _cz: "float" = float(np.round(_C[_iz_r, _iz_c]))
+        _qz: "int" = int(_Ql[_iz_r, _iz_c])
+        _example_text += f"Supprimé : {_cz:+.0f} ÷ {_qz} → 0  (|{abs(_cz):.0f}| < seuil {_qz // 2})"
+    if _has_kept:
+        if _has_zero:
+            _example_text += "\n"
+        _ik_arr: "ndarray" = np.argwhere(np.abs(_Cq) > 0)[0]
+        _ik_r: "int" = int(_ik_arr[0])
+        _ik_c: "int" = int(_ik_arr[1])
+        _ck: "float" = float(np.round(_C[_ik_r, _ik_c]))
+        _qk: "int" = int(_Ql[_ik_r, _ik_c])
+        _cqk: "int" = int(_Cq[_ik_r, _ik_c])
+        _example_text += f"Gardé : {_ck:+.0f} ÷ {_qk} → {_cqk:+d}  (|{abs(_ck):.0f}| ≥ seuil {_qk // 2})"
+
+    _fig, _axes = plt.subplots(2, 4, figsize=(13, 9), layout="constrained", dpi=150,
+                               gridspec_kw={"width_ratios": [1, 0.12, 1, 1]})
+    _axes[0, 1].axis("off")
+    _axes[1, 1].axis("off")
+
+    # Colonne gauche : table Q (opérateur) et erreur (résultat de la perte)
+    _q00: "int" = int(_Ql[0, 0])
+    _q77: "int" = int(_Ql[7, 7])
+    _vmax_q: "float" = float(max(_Ql.max(), 1.0))
+    _axes[0, 0].imshow(_Ql, cmap="Reds", vmin=1, vmax=_vmax_q, interpolation="nearest")
+    for _r in range(8):
+        for _c in range(8):
+            _qtv: "int" = int(_Ql[_r, _c])
+            _rel: "float" = (_qtv - 1.0) / max(_vmax_q - 1.0, 1.0)
+            _axes[0, 0].text(_c, _r, str(_qtv), ha="center", va="center", fontsize=6,
+                             fontweight="bold", color="white" if _rel > 0.55 else "black")
+    _axes[0, 0].set_title(
+        f"Table Q (diviseurs pour qualité {_q})\nSeuil DC ±{_q00 // 2} · Seuil HF ±{_q77 // 2}",
+        fontsize=10,
+    )
+    _axes[0, 0].axis("off")
+
+    _axes[1, 0].imshow(_err, cmap="RdBu_r", vmin=-30, vmax=30, interpolation="nearest")
+    for _r in range(8):
+        for _c in range(8):
+            _ev: "int" = int(round(float(_err[_r, _c])))
+            _axes[1, 0].text(_c, _r, str(_ev), ha="center", va="center", fontsize=6,
+                             fontweight="bold", color="white" if abs(_ev) > 15 else "black")
+    _axes[1, 0].set_title(f"Erreur pixel (orig - recon)\nmax {_err_max:.1f} · moy {_err_mean:.1f}", fontsize=10)
+    _axes[1, 0].axis("off")
+
+    # Colonne centrale : domaine spatial et fréquentiel AVANT quantification
+    _axes[0, 2].imshow(_block + 128.0, cmap="gray", vmin=16, vmax=235, interpolation="nearest")
+    for _r in range(8):
+        for _c in range(8):
+            _v: "int" = int(round(float(_block[_r, _c] + 128.0)))
+            _axes[0, 2].text(_c, _r, str(_v), ha="center", va="center", fontsize=6,
+                             fontweight="bold", color="white" if _v < 128 else "black")
+    _axes[0, 2].set_title("Valeurs Y — avant", fontsize=10)
+    _axes[0, 2].axis("off")
+
+    _axes[1, 2].imshow(np.abs(_C), cmap="plasma", vmin=0, vmax=200, interpolation="nearest")
+    for _r in range(8):
+        for _c in range(8):
+            _cv: "int" = int(round(float(_C[_r, _c])))
+            _amp: "float" = abs(float(_C[_r, _c]))
+            _rgba_c = plt.cm.plasma(min(_amp / 200.0, 1.0))
+            _lum_c: "float" = 0.299 * float(_rgba_c[0]) + 0.587 * float(_rgba_c[1]) + 0.114 * float(_rgba_c[2])
+            _axes[1, 2].text(_c, _r, str(_cv), ha="center", va="center", fontsize=6,
+                             fontweight="bold", color="black" if _lum_c > 0.45 else "white")
+    _axes[1, 2].set_title("Coefficients DCT — avant", fontsize=10)
+    _axes[1, 2].axis("off")
+
+    # Colonne droite : domaine spatial et fréquentiel APRÈS quantification
+    _axes[0, 3].imshow(_recon_block, cmap="gray", vmin=16, vmax=235, interpolation="nearest")
+    for _r in range(8):
+        for _c in range(8):
+            _rv: "int" = int(round(float(_recon_block[_r, _c])))
+            _axes[0, 3].text(_c, _r, str(_rv), ha="center", va="center", fontsize=6,
+                             fontweight="bold", color="white" if _rv < 128 else "black")
+    _axes[0, 3].set_title("Valeurs Y — après", fontsize=10)
+    _axes[0, 3].axis("off")
+
+    _axes[1, 3].imshow(np.abs(_Cq), cmap="plasma", vmin=0, vmax=200, interpolation="nearest")
+    for _r in range(8):
+        for _c in range(8):
+            _qv: "int" = int(round(float(_Cq[_r, _c])))
+            if _qv == 0:
+                _axes[1, 3].text(_c, _r, "0", ha="center", va="center", fontsize=6,
+                                 fontweight="bold", color="#aaaaaa")
+            else:
+                _amp_q: "float" = abs(float(_Cq[_r, _c]))
+                _rgba_q = plt.cm.plasma(min(_amp_q / 200.0, 1.0))
+                _lum_q: "float" = (0.299 * float(_rgba_q[0]) + 0.587 * float(_rgba_q[1])
+                                   + 0.114 * float(_rgba_q[2]))
+                _axes[1, 3].text(_c, _r, str(_qv), ha="center", va="center", fontsize=6,
+                                 fontweight="bold", color="black" if _lum_q > 0.45 else "white")
+    _pct_nuls: "int" = 100 * (64 - _n_nz) // 64
+    _axes[1, 3].set_title(f"Coefficients DCT — après ({_pct_nuls} % nuls)", fontsize=10)
+    _axes[1, 3].axis("off")
+    if _example_text:
+        _axes[1, 3].text(0.5, -0.04, _example_text, ha="center", va="top", fontsize=7.5,
+                         transform=_axes[1, 3].transAxes, fontfamily="monospace")
+
+    _fig.suptitle(
+        f"Bloc {_idx} / {_n_h * _n_w - 1} — qualité {_q} — {_pct_nuls} % de coefficients nuls",
+        fontsize=12, fontweight="bold",
+    )
+    _out = mo.as_html(_fig)
+    plt.close(_fig)
+    mo.output.replace(_out)
+    return
+
+
+@app.cell
+def _(
+    dct2: Callable[[ndarray], ndarray],
+    idct2: Callable[[ndarray], ndarray],
+    image: ndarray,
+    mo: ModuleType,
+    np: ModuleType,
+    plt: ModuleType,
+    quality_factor: marimo.ui.slider,
+    Q_chroma: ndarray,
+    Q_luma: ndarray,
+    rgb_to_ycbcr: Callable[[ndarray], ndarray],
+    scale_q: Callable[[ndarray, int], ndarray],
+    ycbcr_to_rgb: Callable[[ndarray, ndarray, ndarray], ndarray],
+) -> None:
+    _q_img: "int" = quality_factor.value
+    _ycbcr_f: "ndarray" = rgb_to_ycbcr(image).astype(float)
+    _Ql_img: "ndarray" = scale_q(Q_luma,   _q_img)
+    _Qc_img: "ndarray" = scale_q(Q_chroma, _q_img)
+
+    _Y_rec:  "ndarray" = reconstruct_channel(_ycbcr_f[..., 0], _Ql_img, dct2, idct2)
+    _Cb_rec: "ndarray" = reconstruct_channel(_ycbcr_f[..., 1], _Qc_img, dct2, idct2)
+    _Cr_rec: "ndarray" = reconstruct_channel(_ycbcr_f[..., 2], _Qc_img, dct2, idct2)
+    _recon_rgb: "ndarray" = ycbcr_to_rgb(_Y_rec, _Cb_rec, _Cr_rec)
+
+    _diff: "ndarray" = np.clip(
+        np.abs(image.astype(float) - _recon_rgb.astype(float)) * 5, 0, 255
+    ).astype(np.uint8)
+
+    _H_img: "int"
+    _W_img: "int"
+    _H_img, _W_img = image.shape[:2]
+    _n_h_img: "int" = _H_img // 8
+    _n_w_img: "int" = _W_img // 8
+    _flat_Y: "ndarray" = (
+        (_ycbcr_f[..., 0][:_n_h_img * 8, :_n_w_img * 8] - 128.0)
+        .reshape(_n_h_img, 8, _n_w_img, 8)
+        .transpose(0, 2, 1, 3)
+        .reshape(-1, 8, 8)
+    )
+    _Cq_Y: "ndarray" = np.stack([np.round(dct2(b) / _Ql_img) for b in _flat_Y])
+    _pct_zero: "float" = float(100.0 * (_Cq_Y == 0).sum() / _Cq_Y.size)
+
+    _fig, _axes = plt.subplots(1, 3, figsize=(12, 5), layout="constrained", dpi=150)
+    for _i, (_img_data, _title) in enumerate([
+        (image,      "Image originale"),
+        (_recon_rgb, "Image reconstruite"),
+        (_diff,      "Écarts pixel |original - reconstruit| x 5"),
+    ]):
+        _axes[_i].imshow(_img_data, interpolation="nearest")
+        _axes[_i].set_title(_title, fontsize=10)
+        _axes[_i].axis("off")
+
+    _info = mo.md(f"**Qualité : {_q_img}** — {_pct_zero:.0f} % de coefficients nuls dans le canal Y")
+    _out_fig = mo.as_html(_fig)
+    plt.close(_fig)
+    mo.output.replace(mo.vstack([_info, _out_fig]))
+    return
+
+
+@app.cell
+def _(mo: ModuleType) -> None:
+    mo.callout(mo.md("""
+    **La quantification : un filtre par seuillage**
+
+    Chaque coefficient DCT est divisé par le diviseur Q de sa case, puis arrondi à
+    l'entier le plus proche : `Cq = arrondi(C / Q)`. Ce simple arrondi agit comme un filtre :
+    tout coefficient dont la valeur absolue est inférieure au seuil **Q / 2** tombe à zéro
+    et est définitivement éliminé. Ceux qui dépassent ce seuil survivent, arrondis au multiple
+    de Q le plus proche — avec une imprécision proportionnelle à Q.
+
+    Dans une image naturelle, les coefficients hautes fréquences ont généralement de faibles
+    amplitudes. Un grand diviseur Q place un seuil haut, et la plupart de ces coefficients
+    tombent à zéro. Les zéros résultants sont encodés de façon extrêmement compacte à l'étape
+    suivante : c'est ce mécanisme qui produit la compression.
+
+    **Pourquoi les hautes fréquences ont-elles de grands diviseurs ?**
+
+    Les grandes valeurs dans le coin bas-droit de la table Q correspondent aux variations
+    rapides d'un pixel à l'autre (textures fines, contours nets). L'œil humain y est peu
+    sensible — les effacer ne se remarque quasiment pas. Les petites valeurs en haut à gauche
+    protègent le contraste global et les tons moyens, que l'œil discrimine beaucoup mieux.
+
+    **Un niveau de qualité = une table de diviseurs**
+
+    À chaque niveau de qualité correspond une table Q unique, calculée à partir d'une table
+    de référence. Cette table de référence fixe les *proportions*
+    entre les diviseurs : les hautes fréquences ont toujours des diviseurs plus grands que les
+    basses fréquences. Le niveau de qualité en détermine l'*amplitude globale* : un niveau bas de qualité
+    gonfle tous les diviseurs (seuils élevés, peu de coefficients survivent), un niveau élevé de qualité
+    les réduit (seuils bas, presque tout est conservé).
+    À qualité 100, chaque diviseur vaut 1 — quasiment aucun coefficient n'est éliminé.
+    Les valeurs DCT ne sont toutefois pas des entiers, et l'arrondi au multiple de 1
+    le plus proche introduit de légères imprécisions (inférieures à 1 niveau de gris,
+    imperceptibles à l'œil).
+
+    **Artéfacts de bloc (*blocking*)**
+
+    En dessous de qualité 20, chaque bloc 8x8 est reconstruit avec très peu de coefficients,
+    parfois uniquement le terme DC (la luminosité moyenne du bloc). Les discontinuités aux
+    frontières entre blocs deviennent visibles — c'est le défaut caractéristique de la
+    compression JPEG agressive.
+    """), kind="info")
     return
 
 
