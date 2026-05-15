@@ -10,6 +10,8 @@ if TYPE_CHECKING:
     from numpy import ndarray
     from types import ModuleType
 
+__generated_with = "0.23.6"
+
 app = marimo.App(width="wide")
 
 
@@ -661,7 +663,9 @@ def _(image: ndarray, mo: ModuleType) -> None:
 
 @app.cell
 def _(mo: ModuleType) -> None:
-    mo.md("## Étape 4 : Transformée en cosinus discrète (DCT)")
+    mo.md("""
+    ## Étape 4 : Transformée en cosinus discrète (DCT)
+    """)
     return
 
 
@@ -868,7 +872,9 @@ def _(mo: ModuleType) -> None:
 
 @app.cell
 def _(mo: ModuleType) -> None:
-    mo.md("## Étape 5 : Quantification")
+    mo.md("""
+    ## Étape 5 : Quantification
+    """)
     return
 
 
@@ -1223,7 +1229,9 @@ def _(mo: ModuleType) -> None:
 
 @app.cell
 def _(mo: ModuleType) -> None:
-    mo.md("## Étape 6 : Codage entropique")
+    mo.md("""
+    ## Étape 6 : Codage entropique
+    """)
     return
 
 

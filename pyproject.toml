@@ -1,3 +1,8 @@
+[tool.marimo.lint]
+# MF001 (general-formatting) flags from __future__ imports and TYPE_CHECKING guards
+# that are required for Pylance strict mode but conflict with marimo's expected structure.
+ignore = ["MF001"]
+
 [project]
 name = "marimo-jpeg-course"
 version = "0.1.0"
