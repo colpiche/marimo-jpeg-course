@@ -138,7 +138,7 @@ def _(mo: ModuleType) -> None:
     | 3 | Découpage en blocs | Partition en blocs 8x8 pixels | OK |
     | 4 | DCT | Transformée en cosinus discrète | OK |
     | 5 | Quantification | Suppression des hautes fréquences | OK |
-    | 6 | Codage entropique | Huffman + RLE | à venir |
+    | 6 | Codage entropique | RLE + Huffman | OK |
     """)
     return
 
@@ -1222,12 +1222,360 @@ def _(mo: ModuleType) -> None:
 
 @app.cell
 def _(mo: ModuleType) -> None:
-    mo.md("""
-    ## Etape 6 : Codage entropique - *à venir*
+    mo.md("## Étape 6 : Codage entropique")
+    return
 
-    Codage de Huffman + RLE (Run-Length Encoding) pour compresser les coefficients quantifiés
-    sans perte supplémentaire.
-    """)
+
+@app.cell
+def _(np: ModuleType) -> tuple[
+    ndarray,
+    Callable[[ndarray], ndarray],
+    Callable[[ndarray], list[tuple[int, int]]],
+    Callable[[int], int],
+    Callable[[int, int], int],
+]:
+    # Ordre de parcours zigzag JPEG (position 0 = DC, 63 = coin bas-droit)
+    _ZZ_SCAN: "list[tuple[int, int]]" = [
+        (0,0),(0,1),(1,0),(2,0),(1,1),(0,2),(0,3),(1,2),
+        (2,1),(3,0),(4,0),(3,1),(2,2),(1,3),(0,4),(0,5),
+        (1,4),(2,3),(3,2),(4,1),(5,0),(6,0),(5,1),(4,2),
+        (3,3),(2,4),(1,5),(0,6),(0,7),(1,6),(2,5),(3,4),
+        (4,3),(5,2),(6,1),(7,0),(7,1),(6,2),(5,3),(4,4),
+        (3,5),(2,6),(1,7),(2,7),(3,6),(4,5),(5,4),(6,3),
+        (7,2),(7,3),(6,4),(5,5),(4,6),(3,7),(4,7),(5,6),
+        (6,5),(7,4),(7,5),(6,6),(5,7),(6,7),(7,6),(7,7),
+    ]
+
+    # ZIGZAG_IDX[r, c] = numéro de position dans la séquence zigzag (0-63)
+    ZIGZAG_IDX: "ndarray" = np.zeros((8, 8), dtype=int)
+    for _pos, _rc in enumerate(_ZZ_SCAN):
+        _zr: "int" = _rc[0]
+        _zc: "int" = _rc[1]
+        ZIGZAG_IDX[_zr, _zc] = _pos
+
+    def zigzag_scan(block: "ndarray") -> "ndarray":
+        """Retourne les 64 coefficients d'un bloc 8x8 dans l'ordre zigzag JPEG (DC en tête)."""
+        import numpy as _np
+        return _np.array([block[r, c] for r, c in _ZZ_SCAN])
+
+    def rle_encode_ac(seq: "ndarray") -> "list[tuple[int, int]]":
+        """Encode les 63 coefficients AC (positions 1-63) en paires RLE JPEG.
+
+        Chaque paire (run, valeur) : run = zéros précédents (0-15).
+        ZRL = (15, 0) si 16 zéros consécutifs précèdent une valeur non nulle.
+        EOB = (0, 0) en terminaison ; les zéros de queue ne génèrent pas de ZRL.
+        """
+        import numpy as _np
+        _ac: "ndarray" = seq[1:]
+        _nz: "ndarray" = _np.where(_ac != 0)[0]
+        _last_nz: "int" = int(_nz[-1]) if len(_nz) > 0 else -1
+        _pairs: "list[tuple[int, int]]" = []
+        _run: "int" = 0
+        for _i, _v in enumerate(_ac):
+            if _i > _last_nz:
+                break
+            _iv: "int" = int(round(float(_v)))
+            if _iv == 0:
+                _run += 1
+                if _run == 16:
+                    _pairs.append((15, 0))
+                    _run = 0
+            else:
+                _pairs.append((_run, _iv))
+                _run = 0
+        _pairs.append((0, 0))
+        return _pairs
+
+    # Tables de Huffman luminance JPEG Annexe K — longueurs de code en bits (hors bits de catégorie)
+    _DC_LENS: "list[int]" = [2, 3, 3, 3, 3, 3, 4, 5, 6, 7, 8, 9]
+
+    _AC_LENS: "dict[tuple[int, int], int]" = {
+        (0, 0): 4,   (15, 0): 11,
+        (0,1):2,  (0,2):2,  (0,3):3,  (0,4):4,  (0,5):5,  (0,6):7,  (0,7):8,  (0,8):10,
+        (1,1):4,  (1,2):5,  (1,3):7,  (1,4):9,  (1,5):11,
+        (2,1):5,  (2,2):8,  (2,3):10, (2,4):12,
+        (3,1):6,  (3,2):9,  (3,3):12,
+        (4,1):6,  (4,2):10,
+        (5,1):7,  (5,2):11,
+        (6,1):7,  (6,2):12,
+        (7,1):8,  (7,2):12,
+        (8,1):9,  (8,2):15,
+        (9,1):9,  (10,1):9, (11,1):10, (12,1):10,
+        (13,1):11, (14,1):11, (15,1):12,
+    }
+
+    def huffman_dc_bits(diff: int) -> int:
+        """Bits totaux pour encoder un différentiel DC (table Annexe K luminance).
+
+        Total = longueur_code(catégorie) + catégorie.
+        Catégorie = nombre de bits pour représenter abs(diff).
+        """
+        _cat: "int" = int(abs(diff)).bit_length()
+        return _DC_LENS[min(_cat, 11)] + _cat
+
+    def huffman_ac_bits(run: int, value: int) -> int:
+        """Bits totaux pour encoder une paire RLE AC (table Annexe K luminance).
+
+        EOB (0,0) retourne la longueur EOB seule. Autres : longueur_code + catégorie.
+        Renvoie 16 pour les paires absentes de la table standard.
+        """
+        if run == 0 and value == 0:
+            return _AC_LENS.get((0, 0), 4)
+        _cat: "int" = int(abs(value)).bit_length()
+        return _AC_LENS.get((run, _cat), 16) + _cat
+
+    return ZIGZAG_IDX, zigzag_scan, rle_encode_ac, huffman_dc_bits, huffman_ac_bits
+
+
+@app.cell
+def _(
+    ZIGZAG_IDX: ndarray,
+    dct2: Callable[[ndarray], ndarray],
+    get_block_idx: Callable[[], int],
+    image: ndarray,
+    mo: ModuleType,
+    np: ModuleType,
+    plt: ModuleType,
+    quality_factor: marimo.ui.slider,
+    Q_luma: ndarray,
+    rgb_to_ycbcr: Callable[[ndarray], ndarray],
+    scale_q: Callable[[ndarray, int], ndarray],
+    zigzag_scan: Callable[[ndarray], ndarray],
+) -> None:
+    from matplotlib.collections import LineCollection as _LineCollection
+
+    _ycbcr: "ndarray" = rgb_to_ycbcr(image)
+    _Y: "ndarray" = _ycbcr[..., 0]
+    _h: "int"
+    _w: "int"
+    _h, _w = _Y.shape
+    _n_w: "int" = _w // 8
+    _n_h: "int" = _h // 8
+    _idx: "int" = get_block_idx()
+    _q: "int" = quality_factor.value
+    _by: "int" = (_idx // _n_w) * 8
+    _bx: "int" = (_idx % _n_w) * 8
+
+    _block: "ndarray" = _Y[_by:_by + 8, _bx:_bx + 8].astype(float) - 128.0
+    _Ql: "ndarray" = scale_q(Q_luma, _q)
+    _Cq: "ndarray" = np.round(dct2(_block) / _Ql)
+    _seq: "ndarray" = zigzag_scan(_Cq)
+    _n_nz: "int" = int(np.count_nonzero(_Cq))
+
+    # Ordre zigzag reconstruit depuis ZIGZAG_IDX pour les segments du chemin
+    _flat_order: "ndarray" = np.argsort(ZIGZAG_IDX.ravel())
+    _ZZ_RC: "list[tuple[int, int]]" = [(int(k // 8), int(k % 8)) for k in _flat_order]
+
+    _fig, _axd = plt.subplot_mosaic(
+        [[".", "block", "."], ["seq", "seq", "seq"]],
+        figsize=(12, 9), layout="constrained", dpi=150,
+        width_ratios=[1, 1, 1], height_ratios=[1.2, 1],
+    )
+    _ax_b: "plt.Axes" = _axd["block"]
+    _ax_s: "plt.Axes" = _axd["seq"]
+
+    # Panneau gauche : coefficients + chemin zigzag
+    _ax_b.imshow(np.abs(_Cq), cmap="plasma", vmin=0, vmax=200, interpolation="nearest")
+    for _r in range(8):
+        for _c in range(8):
+            _qv: "int" = int(round(float(_Cq[_r, _c])))
+            if _qv == 0:
+                _ax_b.text(_c, _r, "0", ha="center", va="center", fontsize=10,
+                           fontweight="bold", color="#aaaaaa", zorder=4)
+            else:
+                _amp_q: "float" = abs(float(_Cq[_r, _c]))
+                _rgba_q = plt.cm.plasma(min(_amp_q / 200.0, 1.0))
+                _lum_q: "float" = (0.299 * float(_rgba_q[0]) + 0.587 * float(_rgba_q[1])
+                                   + 0.114 * float(_rgba_q[2]))
+                _ax_b.text(_c, _r, str(_qv), ha="center", va="center", fontsize=10,
+                           fontweight="bold", color="black" if _lum_q > 0.45 else "white",
+                           zorder=4)
+
+    _segs: "list[list[tuple[float, float]]]" = [
+        [(_ZZ_RC[_i][1], _ZZ_RC[_i][0]), (_ZZ_RC[_i + 1][1], _ZZ_RC[_i + 1][0])]
+        for _i in range(63)
+    ]
+    _lc = _LineCollection(_segs, cmap="cool", linewidths=1.5, alpha=0.8, zorder=2)
+    _lc.set_array(np.linspace(0.0, 1.0, 63))
+    _ax_b.add_collection(_lc)
+    _ax_b.scatter([_ZZ_RC[0][1]], [_ZZ_RC[0][0]], s=35, color="white", zorder=3)
+    _ax_b.set_title(
+        f"Bloc {_idx} / {_n_h * _n_w - 1} — qualité {_q}\n"
+        "Chemin zigzag",
+        fontsize=10,
+    )
+    _ax_b.axis("off")
+
+    # Panneau bas : séquence complète (position 0 = DC, 1-63 = AC)
+    _bar_colors: "list[str]" = [
+        "#cccccc" if v == 0 else ("#d04020" if v > 0 else "#2050c0")
+        for v in _seq
+    ]
+    _ax_s.bar(np.arange(64), _seq, color=_bar_colors, width=0.85)
+    _ax_s.axhline(0, color="black", linewidth=0.5)
+    _nz_idx: "ndarray" = np.where(_seq != 0)[0]
+    _last_nz: "int" = int(_nz_idx[-1]) if len(_nz_idx) > 0 else 0
+    _ax_s.axvline(_last_nz + 0.5, color="#cc3333", linewidth=1.2, linestyle=":")
+    _yrange: "float" = float(max(abs(float(_seq.max())), abs(float(_seq.min())), 1.0))
+    _ax_s.text(_last_nz + 1.2, _yrange * 0.92, "EOB", fontsize=7, color="#cc3333", ha="left")
+    for _i in range(64):
+        _sv: "int" = int(_seq[_i])
+        if _sv > 0:
+            _ax_s.text(_i, float(_sv) + _yrange * 0.03, str(_sv),
+                       ha="center", va="bottom", fontsize=10, color="#d04020")
+        elif _sv < 0:
+            _ax_s.text(_i, float(_sv) - _yrange * 0.03, str(_sv),
+                       ha="center", va="top", fontsize=10, color="#2050c0")
+        else:
+            _ax_s.text(_i, _yrange * 0.03, "0",
+                       ha="center", va="bottom", fontsize=10, color="#aaaaaa")
+    _ax_s.set_ylim(-_yrange * 1.35, _yrange * 1.35)
+    _ax_s.set_xlim(-0.5, 63.5)
+    _ax_s.set_xlabel("Position zigzag", fontsize=9)
+    _ax_s.set_ylabel("Valeur", fontsize=9)
+    _ax_s.set_title(
+        f"Séquence 1D",
+        fontsize=10,
+    )
+    _ax_s.spines[["top", "right"]].set_visible(False)
+    _ax_s.tick_params(labelsize=7)
+
+    _out = mo.as_html(_fig)
+    plt.close(_fig)
+    mo.output.replace(_out)
+    return
+
+
+@app.cell
+def _(
+    dct2: Callable[[ndarray], ndarray],
+    get_block_idx: Callable[[], int],
+    huffman_ac_bits: Callable[[int, int], int],
+    huffman_dc_bits: Callable[[int], int],
+    image: ndarray,
+    mo: ModuleType,
+    np: ModuleType,
+    quality_factor: marimo.ui.slider,
+    Q_luma: ndarray,
+    rgb_to_ycbcr: Callable[[ndarray], ndarray],
+    rle_encode_ac: Callable[[ndarray], list[tuple[int, int]]],
+    scale_q: Callable[[ndarray, int], ndarray],
+    zigzag_scan: Callable[[ndarray], ndarray],
+) -> None:
+    _ycbcr2: "ndarray" = rgb_to_ycbcr(image)
+    _Y2: "ndarray" = _ycbcr2[..., 0]
+    _h2: "int"
+    _w2: "int"
+    _h2, _w2 = _Y2.shape
+    _n_w2: "int" = _w2 // 8
+    _idx2: "int" = get_block_idx()
+    _q2: "int" = quality_factor.value
+    _by2: "int" = (_idx2 // _n_w2) * 8
+    _bx2: "int" = (_idx2 % _n_w2) * 8
+
+    _block2: "ndarray" = _Y2[_by2:_by2 + 8, _bx2:_bx2 + 8].astype(float) - 128.0
+    _Ql2: "ndarray" = scale_q(Q_luma, _q2)
+    _Cq2: "ndarray" = np.round(dct2(_block2) / _Ql2)
+    _seq2: "ndarray" = zigzag_scan(_Cq2)
+    _pairs2: "list[tuple[int, int]]" = rle_encode_ac(_seq2)
+
+    _dc_bits: "int" = huffman_dc_bits(int(round(float(_Cq2[0, 0]))))
+    _ac_bits: "int" = sum(huffman_ac_bits(r, v) for r, v in _pairs2)
+    _total_bits: "int" = _dc_bits + _ac_bits
+    _n_pairs2: "int" = len(_pairs2)
+
+    # Paires RLE formatées
+    _chips: "list[str]" = []
+    for _rr, _vv in _pairs2:
+        if _rr == 0 and _vv == 0:
+            _chips.append("**`EOB`**")
+        elif _rr == 15 and _vv == 0:
+            _chips.append("`ZRL`")
+        else:
+            _chips.append(f"`({_rr}, {_vv:+d})`")
+
+    _rle_md = mo.md(
+        f"**RLE — {_n_pairs2} paires** (dont EOB) : "
+        + " · ".join(_chips)
+    )
+
+    _huffman_table_md = mo.md("""
+Chaque coefficient non nul occupe **deux zones** dans le fichier :
+
+1. **① Identifier le type** : un code Huffman qui dit *quel événement* — combien de zéros précèdent, et dans quelle plage de magnitude se trouve la valeur. Les événements fréquents reçoivent les codes les plus courts (norme JPEG Annexe K).
+2. **② Préciser la valeur** : quelques bits supplémentaires pour donner la valeur exacte à l'intérieur de la plage. `(0, ±1)` a deux possibilités : `(0, -1)` ou `(0, +1)` → 1 bit suffit. `(0, ±2/±3)` a quatre possibilités → 2 bits.
+
+*Extrait — 8 événements parmi les plus courants (table complète : 162 entrées).*
+
+| Paire RLE<br>(type d'évènement) | ①<br>Code Huffman | ①<br>Longueur<br>(bits) | ②<br>Valeurs possibles | ②<br>Bits pour la valeur | Total<br>① + ②<br>(bits) |
+|-----------|:--------------:|:-----------------:|:-----------------:|:---------------------:|:----------------------------:|
+| `EOB` | `1010` | 4 | 1 | 0 | **4** |
+| `(0, ±1)` | `00` | 2 | 2 | 1 | **3** |
+| `(0, ±2)` ou `(0, ±3)` | `01` | 2 | 4 | 2 | **4** |
+| `(0, ±4)` à `(0, ±7)` | `100` | 3 | 8 | 3 | **6** |
+| `(1, ±1)` | `1100` | 4 | 2 | 1 | **5** |
+| `(1, ±2)` ou `(1, ±3)` | `11011` | 5 | 4 | 2 | **7** |
+| `(2, ±1)` | `11100` | 5 | 2 | 1 | **6** |
+| `(3, ±1)` | `111010` | 6 | 2 | 1 | **7** |
+""")
+
+    _ratio: "float" = 512.0 / _total_bits if _total_bits > 0 else float("inf")
+    _pct_final: "float" = 100.0 * _total_bits / 512.0
+    _compression_md = mo.md(
+        f"**Volume du bloc — avant / après**\n\n"
+        f"| | Bits |\n"
+        f"|---|---:|\n"
+        f"| Brut (8 bits x 64 coefficients) | **512** |\n"
+        f"| Encodé (DC {_dc_bits} bits + AC {_ac_bits} bits) | **{_total_bits}** |\n"
+        f"| Poids final / poids original | **{_pct_final:.1f} %** |\n"
+        f"| Ratio de compression | **{_ratio:.1f}x** |"
+    )
+
+    mo.output.replace(mo.vstack([_rle_md, mo.md("<br><br>"), _huffman_table_md, mo.md("<br><br>"), _compression_md]))
+    return
+
+
+@app.cell
+def _(mo: ModuleType) -> None:
+    mo.callout(mo.md("""
+    **Étape 1 — le parcours zigzag**
+
+    Les 64 coefficients d'un bloc 8x8 sont lus dans un ordre en zigzag : on part du coin
+    haut-gauche (DC — luminosité moyenne) et on parcourt les diagonales successives jusqu'au
+    coin bas-droit (hautes fréquences). Cet ordre place en tête les coefficients les plus
+    importants et regroupe en queue les coefficients hautes fréquences — souvent nuls après
+    quantification — créant de longues plages de zéros consécutifs.
+
+    **Étape 2 — le codage RLE** *(Run-Length Encoding — codage par plages)*
+
+    La séquence AC (63 valeurs après le DC) est encodée en paires `(run, valeur)` :
+    `run` = nombre de zéros qui précèdent la valeur non nulle. Une seule paire remplace
+    souvent 5, 10 ou 20 cases brutes.
+
+    Deux symboles spéciaux complètent l'encodage :
+    - `EOB` (*End Of Block*) : tous les coefficients restants sont nuls. 4 bits suffisent
+      pour clore le bloc, quelle que soit la longueur de la plage de zéros finale.
+    - `ZRL` (*Zero Run Length*) : exactement 16 zéros consécutifs sans valeur non nulle
+      entre eux. Nécessaire car `run` est limité à 15 — au-delà, on empile des `ZRL`.
+
+    **Étape 3 — le codage Huffman**
+
+    Principe : les événements fréquents reçoivent des codes courts, les rares des codes longs.
+    Comme le code Morse où le « E » (lettre la plus commune) est encodé sur un seul point,
+    tandis que le « Q » en demande quatre.
+
+    En JPEG, après quantification, la grande majorité des coefficients AC est nulle.
+    Les valeurs survivantes sont presque toujours petites (±1, ±2). Un coefficient ±1
+    sans zéro devant ne coûte que **3 bits** au total (deuxième ligne du tableau).
+    Un coefficient ±1 précédé de trois zéros en coûte **7** (dernière ligne du tableau).
+    Les événements non listés — valeurs plus grandes ou davantage de zéros — coûtent encore plus.
+
+    Le code Huffman n'encode pas la valeur exacte : il encode *le type d'événement* —
+    combien de zéros précèdent, et dans quelle plage de magnitude se trouve la valeur.
+    Les bits suivant servent à préciser la valeur exacte parmi les différentes possibilités de l'évènement.
+    Plus la quantification est forte, plus les coefficients non nuls sont rares
+    et petits — plus les codes sont courts et le fichier léger.
+    """), kind="info")
     return
 
 
