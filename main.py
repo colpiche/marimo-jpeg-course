@@ -339,7 +339,7 @@ def _(np: ModuleType) -> tuple[
 def _(mo: ModuleType) -> tuple[marimo.ui.radio]:
     sampling_mode = mo.ui.radio(
         options=["4:4:4", "4:2:2", "4:2:0"],
-        value="4:2:0",
+        value="4:4:4",
         label="Mode de sous-échantillonnage",
     )
     sampling_mode
