@@ -525,6 +525,26 @@ def split_into_blocks(channel: "ndarray", block_size: int = 8) -> "ndarray":
     )
 
 
+@app.function
+def extract_y_block(
+    image: "ndarray",
+    ycbcr_fn: "Callable[[ndarray], ndarray]",
+    block_idx: int,
+) -> "tuple[ndarray, int, int]":
+    """Extrait un bloc 8x8 du canal Y centré (level-shift -128).
+
+    Retourne (block_8x8, n_blocs_h, n_blocs_w).
+    """
+    _ycbcr: "ndarray" = ycbcr_fn(image)
+    _Y: "ndarray" = _ycbcr[..., 0]
+    _h, _w = _Y.shape
+    _n_h, _n_w = _h // 8, _w // 8
+    _by = (block_idx // _n_w) * 8
+    _bx = (block_idx % _n_w) * 8
+    _block: "ndarray" = _Y[_by:_by + 8, _bx:_bx + 8].astype(float) - 128.0
+    return _block, _n_h, _n_w
+
+
 @app.cell
 def _(mo: ModuleType) -> tuple[Callable[[], int], Callable[[int], None]]:
     get_block_idx: "Callable[[], int]"
@@ -771,18 +791,11 @@ def _(
     plt: ModuleType,
     rgb_to_ycbcr: Callable[[ndarray], ndarray],
 ) -> None:
-    _ycbcr: "ndarray" = rgb_to_ycbcr(image)
-    _Y: "ndarray" = _ycbcr[..., 0]
-    _h: "int"
-    _w: "int"
-    _h, _w = _Y.shape
-    _n_w: "int" = _w // 8
-    _n_h: "int" = _h // 8
     _idx: "int" = get_block_idx()
-    _by: "int" = (_idx // _n_w) * 8
-    _bx: "int" = (_idx % _n_w) * 8
-
-    _block: "ndarray" = _Y[_by:_by + 8, _bx:_bx + 8].astype(float) - 128.0
+    _block: "ndarray"
+    _n_h: "int"
+    _n_w: "int"
+    _block, _n_h, _n_w = extract_y_block(image, rgb_to_ycbcr, _idx)
     _C: "ndarray" = dct2(_block)
 
     _fig, _axs = plt.subplots(1, 2, figsize=(10, 4), layout="constrained", dpi=150)
@@ -981,19 +994,12 @@ def _(
     rgb_to_ycbcr: Callable[[ndarray], ndarray],
     scale_q: Callable[[ndarray, int], ndarray],
 ) -> None:
-    _ycbcr: "ndarray" = rgb_to_ycbcr(image)
-    _Y: "ndarray" = _ycbcr[..., 0]
-    _h: "int"
-    _w: "int"
-    _h, _w = _Y.shape
-    _n_w: "int" = _w // 8
-    _n_h: "int" = _h // 8
     _idx: "int" = get_block_idx()
     _q: "int" = int(quality_factor.value)
-    _by: "int" = (_idx // _n_w) * 8
-    _bx: "int" = (_idx % _n_w) * 8
-
-    _block: "ndarray" = _Y[_by:_by + 8, _bx:_bx + 8].astype(float) - 128.0
+    _block: "ndarray"
+    _n_h: "int"
+    _n_w: "int"
+    _block, _n_h, _n_w = extract_y_block(image, rgb_to_ycbcr, _idx)
     _C: "ndarray" = dct2(_block)
     _Ql: "ndarray" = scale_q(Q_luma, _q)
     _Cq: "ndarray" = np.round(_C / _Ql)
@@ -1351,19 +1357,12 @@ def _(
 ) -> None:
     from matplotlib.collections import LineCollection as _LineCollection
 
-    _ycbcr: "ndarray" = rgb_to_ycbcr(image)
-    _Y: "ndarray" = _ycbcr[..., 0]
-    _h: "int"
-    _w: "int"
-    _h, _w = _Y.shape
-    _n_w: "int" = _w // 8
-    _n_h: "int" = _h // 8
     _idx: "int" = get_block_idx()
     _q: "int" = int(quality_factor.value)
-    _by: "int" = (_idx // _n_w) * 8
-    _bx: "int" = (_idx % _n_w) * 8
-
-    _block: "ndarray" = _Y[_by:_by + 8, _bx:_bx + 8].astype(float) - 128.0
+    _block: "ndarray"
+    _n_h: "int"
+    _n_w: "int"
+    _block, _n_h, _n_w = extract_y_block(image, rgb_to_ycbcr, _idx)
     _Ql: "ndarray" = scale_q(Q_luma, _q)
     _Cq: "ndarray" = np.round(dct2(_block) / _Ql)
     _seq: "ndarray" = zigzag_scan(_Cq)
@@ -1469,31 +1468,25 @@ def _(
     scale_q: Callable[[ndarray, int], ndarray],
     zigzag_scan: Callable[[ndarray], ndarray],
 ) -> None:
-    _ycbcr2: "ndarray" = rgb_to_ycbcr(image)
-    _Y2: "ndarray" = _ycbcr2[..., 0]
-    _h2: "int"
-    _w2: "int"
-    _h2, _w2 = _Y2.shape
-    _n_w2: "int" = _w2 // 8
-    _idx2: "int" = get_block_idx()
-    _q2: "int" = int(quality_factor.value)
-    _by2: "int" = (_idx2 // _n_w2) * 8
-    _bx2: "int" = (_idx2 % _n_w2) * 8
+    _idx: "int" = get_block_idx()
+    _q: "int" = int(quality_factor.value)
+    _block: "ndarray"
+    _n_h: "int"
+    _n_w: "int"
+    _block, _n_h, _n_w = extract_y_block(image, rgb_to_ycbcr, _idx)
+    _Ql: "ndarray" = scale_q(Q_luma, _q)
+    _Cq: "ndarray" = np.round(dct2(_block) / _Ql)
+    _seq: "ndarray" = zigzag_scan(_Cq)
+    _pairs: "list[tuple[int, int]]" = rle_encode_ac(_seq)
 
-    _block2: "ndarray" = _Y2[_by2:_by2 + 8, _bx2:_bx2 + 8].astype(float) - 128.0
-    _Ql2: "ndarray" = scale_q(Q_luma, _q2)
-    _Cq2: "ndarray" = np.round(dct2(_block2) / _Ql2)
-    _seq2: "ndarray" = zigzag_scan(_Cq2)
-    _pairs2: "list[tuple[int, int]]" = rle_encode_ac(_seq2)
-
-    _dc_bits: "int" = huffman_dc_bits(int(round(float(_Cq2[0, 0]))))
-    _ac_bits: "int" = sum(huffman_ac_bits(r, v) for r, v in _pairs2)
+    _dc_bits: "int" = huffman_dc_bits(int(round(float(_Cq[0, 0]))))
+    _ac_bits: "int" = sum(huffman_ac_bits(r, v) for r, v in _pairs)
     _total_bits: "int" = _dc_bits + _ac_bits
-    _n_pairs2: "int" = len(_pairs2)
+    _n_pairs: "int" = len(_pairs)
 
     # Paires RLE formatées
     _chips: "list[str]" = []
-    for _rr, _vv in _pairs2:
+    for _rr, _vv in _pairs:
         if _rr == 0 and _vv == 0:
             _chips.append("**`EOB`**")
         elif _rr == 15 and _vv == 0:
@@ -1502,7 +1495,7 @@ def _(
             _chips.append(f"`({_rr}, {_vv:+d})`")
 
     _rle_md = mo.md(
-        f"**RLE — {_n_pairs2} paires** (dont EOB) : "
+        f"**RLE — {_n_pairs} paires** (dont EOB) : "
         + " · ".join(_chips)
     )
 
