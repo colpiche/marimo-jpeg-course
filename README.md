@@ -1,11 +1,20 @@
-# Compression JPEG - Cours interactif
+# Compression JPEG — Cours interactif
 
 <!-- BADGES -->
 [![Marimo](https://img.shields.io/badge/marimo-notebook-blue)](https://marimo.io)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
 [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/notebooks/nb_PcrRS5A7d99UDxXtPmvJtg)
 
-Carnet [Marimo](https://marimo.io) illustrant pas à pas les étapes de la compression JPEG.
+Carnet marimo interactif illustrant pas à pas les six étapes de la compression JPEG. Chaque paramètre (facteur qualité, mode de sous-échantillonnage, bloc sélectionné) est modifiable en temps réel.
+
+## Étapes couvertes
+
+1. **Codage de la couleur** — conversion RGB → YCbCr (ITU-R BT.601)
+2. **Sous-échantillonnage** — réduction des chrominances Cb/Cr (4:4:4 / 4:2:2 / 4:2:0)
+3. **Découpage en blocs** — partition de l'image en blocs 8×8 pixels
+4. **DCT** — transformée en cosinus discrète par bloc
+5. **Quantification** — suppression des hautes fréquences via table Q
+6. **Codage entropique** — parcours zigzag, RLE et codes de Huffman
 
 ## Utilisation en ligne
 
