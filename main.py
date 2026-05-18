@@ -344,7 +344,7 @@ def _(mo: ModuleType) -> tuple[marimo.ui.radio]:
         value="4:2:0",
         label="Mode de sous-échantillonnage",
     )
-    mo.hstack([sampling_mode], justify="start")
+    sampling_mode
     return (sampling_mode,)
 
 
@@ -922,7 +922,7 @@ def _(mo: ModuleType) -> tuple[marimo.ui.slider]:
         label="Facteur de qualité JPEG",
         show_value=True,
     )
-    mo.hstack([quality_factor], justify="start")
+    quality_factor
     return (quality_factor,)
 
 
