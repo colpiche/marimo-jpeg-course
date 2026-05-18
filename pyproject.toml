@@ -1,6 +1,9 @@
 [tool.marimo.runtime]
 auto_instantiate = true
 
+[tool.marimo.display]
+theme = "light"
+
 [tool.marimo.lint]
 # MF001 (general-formatting) flags from __future__ imports and TYPE_CHECKING guards
 # that are required for Pylance strict mode but conflict with marimo's expected structure.
