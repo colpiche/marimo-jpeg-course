@@ -1,3 +1,14 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "marimo>=0.23.6",
+#     "matplotlib>=3.10.9",
+#     "numpy>=2.4.4",
+#     "pooch>=1.9.0",
+#     "scipy>=1.17.1",
+# ]
+# ///
+
 from __future__ import annotations
 
 import marimo
