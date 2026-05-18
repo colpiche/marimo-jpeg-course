@@ -375,9 +375,14 @@ def _(
     _cy, _cx = _H // 2, _W // 2
     _crop: "ndarray" = image[_cy - 4:_cy + 4, _cx - 4:_cx + 4]
 
-    _block_label: "str" = {"4:4:4": "1x1", "4:2:2": "2x1", "4:2:0": "2x2"}[sampling_mode.value]
-    _gs_w: "int" = {"4:4:4": 1, "4:2:2": 2, "4:2:0": 2}[sampling_mode.value]
-    _gs_h: "int" = {"4:4:4": 1, "4:2:2": 1, "4:2:0": 2}[sampling_mode.value]
+    _block_label: "str"
+    _gs_w: "int"
+    _gs_h: "int"
+    _block_label, _gs_w, _gs_h = {
+        "4:4:4": ("1x1", 1, 1),
+        "4:2:2": ("2x1", 2, 1),
+        "4:2:0": ("2x2", 2, 2),
+    }[sampling_mode.value]
     _PH, _PW = 8, 8
 
     _fig = plt.figure(figsize=(12, 24), layout="constrained", dpi=200)
