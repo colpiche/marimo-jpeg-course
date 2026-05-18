@@ -131,17 +131,18 @@ def _(mo: ModuleType) -> None:
     mo.md("""
     # Compression JPEG - Cours interactif
 
-    Ce carnet illustre pas a pas les étapes de la compression JPEG.
-    Modifiez les paramètres pour observer les effets en temps réel.
+    La compression JPEG réduit le poids d'une image en exploitant les limites de la
+    perception visuelle humaine : l'œil est peu sensible aux hautes fréquences spatiales
+    et aux détails fins des couleurs. Ce carnet décompose ce processus en six étapes,
+    de la conversion colorimétrique jusqu'au codage entropique — chaque widget permet
+    d'observer en temps réel l'effet des paramètres sur l'image.
 
-    | # | Etape | Description | Statut |
-    |:--|:------|:------------|:-------|
-    | 1 | Codage de la couleur | Conversion RGB vers YCbCr | OK |
-    | 2 | Sous-échantillonnage | Réduction des chrominances Cb/Cr | OK |
-    | 3 | Découpage en blocs | Partition en blocs 8x8 pixels | OK |
-    | 4 | DCT | Transformée en cosinus discrète | OK |
-    | 5 | Quantification | Suppression des hautes fréquences | OK |
-    | 6 | Codage entropique | RLE + Huffman | OK |
+    1. [Codage de la couleur](#step-1)
+    2. [Sous-échantillonnage](#step-2)
+    3. [Découpage en blocs](#step-3)
+    4. [DCT](#step-4)
+    5. [Quantification](#step-5)
+    6. [Codage entropique](#step-6)
     """)
     return
 
@@ -149,7 +150,9 @@ def _(mo: ModuleType) -> None:
 @app.cell
 def _(mo: ModuleType) -> None:
     mo.md("""
-    ## Etape 1 : Codage de la couleur
+    <a id="step-1"></a>
+
+    ## Étape 1 : Codage de la couleur
     """)
     return
 
@@ -281,7 +284,9 @@ def _(color_space: marimo.ui.radio, mo: ModuleType) -> None:
 def _(mo: ModuleType) -> None:
     mo.md("""
     ---
-    ## Etape 2 : Sous-échantillonnage de la chrominance
+    <a id="step-2"></a>
+
+    ## Étape 2 : Sous-échantillonnage de la chrominance
     """)
     return
 
@@ -496,6 +501,8 @@ def _(mo: ModuleType, sampling_mode: marimo.ui.radio) -> None:
 @app.cell
 def _(mo: ModuleType) -> None:
     mo.md("""
+    <a id="step-3"></a>
+
     ## Étape 3 : Découpage en blocs 8x8
     """)
     return
@@ -717,6 +724,8 @@ def _(image: ndarray, mo: ModuleType) -> None:
 @app.cell
 def _(mo: ModuleType) -> None:
     mo.md("""
+    <a id="step-4"></a>
+
     ## Étape 4 : Transformée en cosinus discrète (DCT)
     """)
     return
@@ -899,6 +908,8 @@ def _(mo: ModuleType) -> None:
 @app.cell
 def _(mo: ModuleType) -> None:
     mo.md("""
+    <a id="step-5"></a>
+
     ## Étape 5 : Quantification
     """)
     return
@@ -1225,6 +1236,8 @@ def _(mo: ModuleType) -> None:
 @app.cell
 def _(mo: ModuleType) -> None:
     mo.md("""
+    <a id="step-6"></a>
+
     ## Étape 6 : Codage entropique
     """)
     return
