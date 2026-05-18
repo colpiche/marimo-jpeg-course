@@ -936,8 +936,6 @@ def _(np: ModuleType) -> tuple[
 def reconstruct_channel(
     channel: "ndarray",
     Q_scaled: "ndarray",
-    dct2_fn: "Callable[[ndarray], ndarray]",
-    idct2_fn: "Callable[[ndarray], ndarray]",
 ) -> "ndarray":
     """Quantifie et reconstruit un canal 2D complet par blocs 8x8.
 
@@ -945,6 +943,7 @@ def reconstruct_channel(
     conformément au standard JPEG. Retourne le canal clipé à [0, 255].
     """
     import numpy as _np
+    from scipy.fft import dctn as _dctn, idctn as _idctn  # type: ignore[import-untyped]
     H, W = channel.shape
     n_h, n_w = H // 8, W // 8
     _flat: "ndarray" = (
@@ -953,10 +952,10 @@ def reconstruct_channel(
         .transpose(0, 2, 1, 3)
         .reshape(-1, 8, 8)
     )
-    _coeffs: "ndarray" = _np.stack([dct2_fn(b) for b in _flat])
-    _quant:  "ndarray" = _np.round(_coeffs / Q_scaled[_np.newaxis, :, :])
+    _coeffs: "ndarray" = _dctn(_flat, axes=(1, 2), norm="ortho")
+    _quant: "ndarray" = _np.round(_coeffs / Q_scaled[_np.newaxis, :, :])
     _dequant: "ndarray" = _quant * Q_scaled[_np.newaxis, :, :]
-    _recon:  "ndarray" = _np.stack([idct2_fn(d) for d in _dequant]) + 128.0
+    _recon: "ndarray" = _idctn(_dequant, axes=(1, 2), norm="ortho") + 128.0
     _recon_2d: "ndarray" = (
         _recon
         .reshape(n_h, n_w, 8, 8)
@@ -1123,8 +1122,6 @@ def _(
 
 @app.cell
 def _(
-    dct2: Callable[[ndarray], ndarray],
-    idct2: Callable[[ndarray], ndarray],
     image: ndarray,
     mo: ModuleType,
     np: ModuleType,
@@ -1141,9 +1138,9 @@ def _(
     _Ql_img: "ndarray" = scale_q(Q_luma,   _q_img)
     _Qc_img: "ndarray" = scale_q(Q_chroma, _q_img)
 
-    _Y_rec:  "ndarray" = reconstruct_channel(_ycbcr_f[..., 0], _Ql_img, dct2, idct2)
-    _Cb_rec: "ndarray" = reconstruct_channel(_ycbcr_f[..., 1], _Qc_img, dct2, idct2)
-    _Cr_rec: "ndarray" = reconstruct_channel(_ycbcr_f[..., 2], _Qc_img, dct2, idct2)
+    _Y_rec:  "ndarray" = reconstruct_channel(_ycbcr_f[..., 0], _Ql_img)
+    _Cb_rec: "ndarray" = reconstruct_channel(_ycbcr_f[..., 1], _Qc_img)
+    _Cr_rec: "ndarray" = reconstruct_channel(_ycbcr_f[..., 2], _Qc_img)
     _recon_rgb: "ndarray" = ycbcr_to_rgb(_Y_rec, _Cb_rec, _Cr_rec)
 
     _diff: "ndarray" = np.clip(
@@ -1155,13 +1152,14 @@ def _(
     _H_img, _W_img = image.shape[:2]
     _n_h_img: "int" = _H_img // 8
     _n_w_img: "int" = _W_img // 8
+    from scipy.fft import dctn as _dctn  # type: ignore[import-untyped]
     _flat_Y: "ndarray" = (
         (_ycbcr_f[..., 0][:_n_h_img * 8, :_n_w_img * 8] - 128.0)
         .reshape(_n_h_img, 8, _n_w_img, 8)
         .transpose(0, 2, 1, 3)
         .reshape(-1, 8, 8)
     )
-    _Cq_Y: "ndarray" = np.stack([np.round(dct2(b) / _Ql_img) for b in _flat_Y])
+    _Cq_Y: "ndarray" = np.round(_dctn(_flat_Y, axes=(1, 2), norm="ortho") / _Ql_img)
     _pct_zero: "float" = float(100.0 * (_Cq_Y == 0).sum() / _Cq_Y.size)
 
     _fig, _axes = plt.subplots(1, 3, figsize=(12, 5), layout="constrained", dpi=150)
