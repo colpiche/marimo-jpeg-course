@@ -37,4 +37,4 @@ Les dépendances sont gérées par [uv](https://github.com/astral-sh/uv) via `py
 uv add <package>
 ```
 
-Le bloc PEP 723 en tête de `main.py` doit rester synchronisé avec `pyproject.toml` pour que le carnet soit auto-suffisant sur les plateformes cloud (molab, etc.).
+molab ne semble pas prendre en compte le bloc PEP 723 pour l'installation automatique des dépendances. Sur molab, il faut installer les packages manuellement depuis l'éditeur (panneau latéral → *Manage packages*).
