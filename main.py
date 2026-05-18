@@ -258,15 +258,13 @@ def _(color_space: marimo.ui.radio, mo: ModuleType) -> None:
     Chaque pixel est défini par trois composantes *Rouge (R)*, *Vert (G)*, *Bleu (B)* codées sur 8 bits, soit dans l'intervalle [0, 255].
     Cet espace est **peu adapté à la compression** : les trois canaux sont fortement corrélés entre eux
     et l'oeil humain n'est pas sensible de la même manière aux trois couleurs primaires.
-
-    Basculez sur **YCbCr** pour voir comment JPEG sépare luminance et chrominance.
     """),
         "YCbCr": mo.md("""
     **Espace YCbCr** - représentation utilisée par le standard JPEG (norme ITU-R BT.601).
 
     | Canal | Plage | Rôle |
     |:------|:------|:-----|
-    | **Y** - Luminance | [16, 235] | Information de luminosité - perçue avec la plus haute acuité visuelle |
+    | **Y** - Luminance | [16, 235] | Information de luminosité |
     | **Cb** - Chroma bleue | [16, 240] | Différence de couleur vers le bleu |
     | **Cr** - Chroma rouge | [16, 240] | Différence de couleur vers le rouge |
 
@@ -473,7 +471,7 @@ def _(mo: ModuleType, sampling_mode: marimo.ui.radio) -> None:
 
     Chaque pixel conserve ses trois composantes Y, Cb, Cr à pleine résolution.
     Cb et Cr sont stockés à résolution pleine **(W x H)** — gain en chrominance : **0 %**.
-    Utilisé en photographie professionnelle et en vidéo haut de gamme.
+    Utilisé pour éviter toute perte d'information : étalonnage, incrustation en chrominance, imagerie médicale...
     """),
         "4:2:2": mo.md("""
     **Mode 4:2:2** — sous-échantillonnage horizontal uniquement.
@@ -705,7 +703,7 @@ def _(image: ndarray, mo: ModuleType) -> None:
     mo.callout(mo.md(f"""
     **Pourquoi des blocs 8x8 ?**
 
-    La DCT (étape suivante) travaille sur des blocs de taille fixe. La taille 8x8 est un compromis :
+    La prochaine étape (DCT) travaille sur des blocs de taille fixe. La taille 8x8 est un compromis :
     des blocs plus petits perdraient la cohérence spatiale des fréquences ; des blocs plus grands
     augmenteraient la complexité sans gain perceptible — l'œil humain discrimine mal les variations
     spatiales au-delà d'environ 8 cycles par degré visuel.
@@ -894,14 +892,6 @@ def _(mo: ModuleType) -> None:
     (coin bas-droite) sont souvent très faibles, voire nuls — comme on peut le constater en
     faisant varier le bloc sélectionné. C'est cette concentration qui rend la DCT efficace
     pour la compression.
-
-    **Ce qui arrive ensuite : quantification (étape 5)**
-
-    JPEG exploite la compaction d'énergie en divisant chaque coefficient par une valeur issue
-    d'une *table de quantification*. Les diviseurs sont grands pour les hautes fréquences
-    (souvent > 10) et petits pour les basses fréquences. Après arrondi à l'entier, les
-    coefficients de haute fréquence tombent naturellement à zéro — c'est l'étape suivante
-    qui détaillera ce mécanisme et montrera son impact sur la qualité d'image.
     """), kind="info")
     return
 
@@ -1184,6 +1174,11 @@ def _(
 @app.cell
 def _(mo: ModuleType) -> None:
     mo.callout(mo.md("""
+    JPEG exploite la compaction d'énergie de la DCT en divisant chaque coefficient par une
+    valeur issue d'une *table de quantification*. Les diviseurs sont grands pour les hautes
+    fréquences (souvent > 10) et petits pour les basses fréquences. Après arrondi à l'entier,
+    les coefficients de haute fréquence tombent naturellement à zéro.
+
     **La quantification : un filtre par seuillage**
 
     Chaque coefficient DCT est divisé par le diviseur Q de sa case, puis arrondi à
@@ -1524,7 +1519,7 @@ def _(mo: ModuleType) -> None:
     **Étape 1 — le parcours zigzag**
 
     Les 64 coefficients d'un bloc 8x8 sont lus dans un ordre en zigzag : on part du coin
-    haut-gauche (DC — luminosité moyenne) et on parcourt les diagonales successives jusqu'au
+    haut-gauche (DC) et on parcourt les diagonales successives jusqu'au
     coin bas-droit (hautes fréquences). Cet ordre place en tête les coefficients les plus
     importants et regroupe en queue les coefficients hautes fréquences — souvent nuls après
     quantification — créant de longues plages de zéros consécutifs.
