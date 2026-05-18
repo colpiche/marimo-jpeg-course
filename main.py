@@ -33,6 +33,8 @@ def _(
     Callable[[ndarray, str], tuple[list[ndarray], list[str], list[str | LinearSegmentedColormap], list[tuple[int, int]]]],
     Callable[[ndarray, ndarray, ndarray], ndarray],
     Callable[[ndarray], ndarray],
+    LinearSegmentedColormap,
+    LinearSegmentedColormap,
 ]:
 
     # Matrice ITU-R BT.601 : lignes = (Y, Cb, Cr), colonnes = (R, G, B).
@@ -72,25 +74,23 @@ def _(
     # RGB   : dégradé noir → couleur primaire (0 = canal absent, 255 = saturation pleine).
     # YCbCr : 3 ancres par canal (min=16, neutre=128, max=240) calculées avec
     # ycbcr_to_rgb(Y=128, autre_chroma=128) pour refléter la teinte réellement encodée.
+    cb_cmap: "LinearSegmentedColormap" = LinearSegmentedColormap.from_list("Cb_BT601", [
+        (130/255, 174/255,   0/255),  # Cb=16  : jaune-vert
+        (130/255, 130/255, 130/255),  # Cb=128 : gris neutre
+        (130/255,  86/255, 255/255),  # Cb=240 : bleu vif
+    ])
+    cr_cmap: "LinearSegmentedColormap" = LinearSegmentedColormap.from_list("Cr_BT601", [
+        (  0/255, 221/255, 130/255),  # Cr=16  : cyan-vert
+        (130/255, 130/255, 130/255),  # Cr=128 : gris neutre
+        (255/255,  39/255, 130/255),  # Cr=240 : rouge vif
+    ])
     _CMAPS: dict[str, list[str | LinearSegmentedColormap]] = {
         "RGB": [
             LinearSegmentedColormap.from_list("R", [(0, 0, 0), (1, 0, 0)]),
             LinearSegmentedColormap.from_list("G", [(0, 0, 0), (0, 1, 0)]),
             LinearSegmentedColormap.from_list("B", [(0, 0, 0), (0, 0, 1)]),
         ],
-        "YCbCr": [
-            "gray",
-            LinearSegmentedColormap.from_list("Cb_BT601", [
-                (130/255, 174/255,   0/255),  # Cb=16  : jaune-vert
-                (130/255, 130/255, 130/255),  # Cb=128 : gris neutre
-                (130/255,  86/255, 255/255),  # Cb=240 : bleu vif
-            ]),
-            LinearSegmentedColormap.from_list("Cr_BT601", [
-                (  0/255, 221/255, 130/255),  # Cr=16  : cyan-vert
-                (130/255, 130/255, 130/255),  # Cr=128 : gris neutre
-                (255/255,  39/255, 130/255),  # Cr=240 : rouge vif
-            ]),
-        ],
+        "YCbCr": ["gray", cb_cmap, cr_cmap],
     }
 
     def get_channels(img: "ndarray", space: str) -> "tuple[list[ndarray], list[str], list[str | LinearSegmentedColormap], list[tuple[int, int]]]":
@@ -115,7 +115,7 @@ def _(
 
         return channels, names, _CMAPS[space], ranges
 
-    return (get_channels, ycbcr_to_rgb, rgb_to_ycbcr)
+    return (get_channels, ycbcr_to_rgb, rgb_to_ycbcr, cb_cmap, cr_cmap)
 
 
 @app.cell
@@ -350,7 +350,8 @@ def _(mo: ModuleType) -> tuple[marimo.ui.radio]:
 
 @app.cell
 def _(
-    LinearSegmentedColormap: type[LinearSegmentedColormap],
+    cb_cmap: LinearSegmentedColormap,
+    cr_cmap: LinearSegmentedColormap,
     chroma_subsample: Callable[[ndarray, str], tuple[ndarray, ndarray, ndarray]],
     chroma_upsample: Callable[[ndarray, ndarray, ndarray, str], ndarray],
     image: ndarray,
@@ -378,18 +379,6 @@ def _(
     _gs_w: "int" = {"4:4:4": 1, "4:2:2": 2, "4:2:0": 2}[sampling_mode.value]
     _gs_h: "int" = {"4:4:4": 1, "4:2:2": 1, "4:2:0": 2}[sampling_mode.value]
     _PH, _PW = 8, 8
-
-    # Colormaps BT.601 pour Cb et Cr (mêmes ancres que l'étape 1)
-    _cb_cmap = LinearSegmentedColormap.from_list("Cb_BT601", [
-        (130/255, 174/255,   0/255),
-        (130/255, 130/255, 130/255),
-        (130/255,  86/255, 255/255),
-    ])
-    _cr_cmap = LinearSegmentedColormap.from_list("Cr_BT601", [
-        (  0/255, 221/255, 130/255),
-        (130/255, 130/255, 130/255),
-        (255/255,  39/255, 130/255),
-    ])
 
     _fig = plt.figure(figsize=(12, 24), layout="constrained", dpi=200)
     # height_ratios sections = somme des ratios internes de chaque section (4+4=8, 4+4+5=13).
@@ -429,8 +418,8 @@ def _(
 
         for _i, (_ch, _cmap, _name, _vmin, _vmax, _gsw, _gsh) in enumerate([
             (_ycbcr_up[..., 0], "gray",   "Y — Luminance",              16, 235, 1,     1    ),
-            (_ycbcr_up[..., 1], _cb_cmap, "Cb — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
-            (_ycbcr_up[..., 2], _cr_cmap, "Cr — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
+            (_ycbcr_up[..., 1], cb_cmap, "Cb — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
+            (_ycbcr_up[..., 2], cr_cmap, "Cr — blocs " + _block_label, 16, 240, _gs_w, _gs_h),
         ]):
             _ax = _sfs[1].add_subplot(1, 3, _i + 1)
             _im = _ax.imshow(_ch, cmap=_cmap, vmin=_vmin, vmax=_vmax, interpolation="nearest")
