@@ -545,6 +545,55 @@ def extract_y_block(
     return _block, _n_h, _n_w
 
 
+@app.function
+def annotate_spatial_block(
+    ax: "Axes",
+    block: "ndarray",
+    threshold: int = 128,
+    fontsize: int = 6,
+) -> None:
+    """Annote chaque cellule d'un heatmap 8x8 spatial avec sa valeur entière.
+
+    Texte blanc si la valeur est inférieure au seuil, noir sinon.
+    """
+    for r in range(8):
+        for c in range(8):
+            v: int = int(round(float(block[r, c])))
+            ax.text(c, r, str(v), ha="center", va="center", fontsize=fontsize,
+                    fontweight="bold", color="white" if v < threshold else "black")
+
+
+@app.function
+def annotate_dct_block(
+    ax: "Axes",
+    C: "ndarray",
+    fontsize: int = 6,
+    zero_color: str = "",
+    zorder: int = 1,
+) -> None:
+    """Annote chaque cellule d'un heatmap 8x8 DCT avec la valeur du coefficient.
+
+    Couleur du texte dérivée de la luminance plasma sous-jacente.
+    Si zero_color est fourni, les zéros sont affichés dans cette couleur.
+    """
+    import matplotlib.pyplot as _plt
+    _plasma = _plt.cm.plasma  # type: ignore[attr-defined]
+    for r in range(8):
+        for c in range(8):
+            cv: int = int(round(float(C[r, c])))
+            if cv == 0 and zero_color:
+                ax.text(c, r, "0", ha="center", va="center", fontsize=fontsize,
+                        fontweight="bold", color=zero_color, zorder=zorder)
+            else:
+                amp: float = abs(float(C[r, c]))
+                rgba: "tuple[float, float, float, float]" = _plasma(min(amp / 200.0, 1.0))
+                lum: float = (0.299 * float(rgba[0]) + 0.587 * float(rgba[1])
+                              + 0.114 * float(rgba[2]))
+                ax.text(c, r, str(cv), ha="center", va="center", fontsize=fontsize,
+                        fontweight="bold", color="black" if lum > 0.45 else "white",
+                        zorder=zorder)
+
+
 @app.cell
 def _(mo: ModuleType) -> tuple[Callable[[], int], Callable[[int], None]]:
     get_block_idx: "Callable[[], int]"
@@ -638,15 +687,7 @@ def _(
         _ax = _sfs[1].add_subplot(1, 2, _i + 1)
         _ax.imshow(_block, cmap="gray", vmin=16, vmax=235, interpolation="nearest")
         if _show_vals:
-            for _r in range(8):
-                for _c in range(8):
-                    _val = int(round(float(_block[_r, _c])))
-                    _ax.text(
-                        _c, _r, str(_val), ha="center", va="center",
-                        fontsize=6, fontweight="bold",
-                        # blanc sur foncé (< 128), noir sur clair
-                        color="white" if _val < 128 else "black",
-                    )
+            annotate_spatial_block(_ax, _block)
         _ax.set_title(_title, fontsize=10)
         _ax.axis("off")
 
@@ -802,25 +843,13 @@ def _(
 
     # Panneau 1 — Bloc Y original avec valeurs numériques
     _axs[0].imshow(_block + 128.0, cmap="gray", vmin=16, vmax=235, interpolation="nearest")
-    for _r in range(8):
-        for _c in range(8):
-            _v: "int" = int(round(float(_block[_r, _c] + 128.0)))
-            _axs[0].text(_c, _r, str(_v), ha="center", va="center", fontsize=6,
-                         fontweight="bold", color="white" if _v < 128 else "black")
+    annotate_spatial_block(_axs[0], _block + 128.0)
     _axs[0].set_title(f"Valeurs Y", fontsize=9)
     _axs[0].axis("off")
 
     # Panneau 2 — Amplitude |C| en couleur (plasma), valeur entière signée en texte.
-    # Luminance perceptuelle de la couleur plasma pour garantir la lisibilité du texte.
     _axs[1].imshow(np.abs(_C), cmap="plasma", vmin=0, vmax=200, interpolation="nearest")
-    for _r in range(8):
-        for _c in range(8):
-            _cv: "int" = int(round(float(_C[_r, _c])))
-            _amp: "float" = abs(float(_C[_r, _c]))
-            _rgba_bg: "tuple[float, float, float, float]" = plt.cm.plasma(min(_amp / 200.0, 1.0))
-            _lum: "float" = 0.299 * float(_rgba_bg[0]) + 0.587 * float(_rgba_bg[1]) + 0.114 * float(_rgba_bg[2])
-            _axs[1].text(_c, _r, str(_cv), ha="center", va="center", fontsize=6,
-                         fontweight="bold", color="black" if _lum > 0.45 else "white")
+    annotate_dct_block(_axs[1], _C)
     _fig.colorbar(
         plt.cm.ScalarMappable(cmap="plasma", norm=plt.Normalize(0, 200)),
         ax=_axs[1], fraction=0.046, pad=0.04, label="Amplitude |C|",
@@ -1065,50 +1094,23 @@ def _(
 
     # Colonne centrale : domaine spatial et fréquentiel AVANT quantification
     _axes[0, 2].imshow(_block + 128.0, cmap="gray", vmin=16, vmax=235, interpolation="nearest")
-    for _r in range(8):
-        for _c in range(8):
-            _v: "int" = int(round(float(_block[_r, _c] + 128.0)))
-            _axes[0, 2].text(_c, _r, str(_v), ha="center", va="center", fontsize=6,
-                             fontweight="bold", color="white" if _v < 128 else "black")
+    annotate_spatial_block(_axes[0, 2], _block + 128.0)
     _axes[0, 2].set_title("Valeurs Y — avant", fontsize=10)
     _axes[0, 2].axis("off")
 
     _axes[1, 2].imshow(np.abs(_C), cmap="plasma", vmin=0, vmax=200, interpolation="nearest")
-    for _r in range(8):
-        for _c in range(8):
-            _cv: "int" = int(round(float(_C[_r, _c])))
-            _amp: "float" = abs(float(_C[_r, _c]))
-            _rgba_c = plt.cm.plasma(min(_amp / 200.0, 1.0))
-            _lum_c: "float" = 0.299 * float(_rgba_c[0]) + 0.587 * float(_rgba_c[1]) + 0.114 * float(_rgba_c[2])
-            _axes[1, 2].text(_c, _r, str(_cv), ha="center", va="center", fontsize=6,
-                             fontweight="bold", color="black" if _lum_c > 0.45 else "white")
+    annotate_dct_block(_axes[1, 2], _C)
     _axes[1, 2].set_title("Coefficients DCT — avant", fontsize=10)
     _axes[1, 2].axis("off")
 
     # Colonne droite : domaine spatial et fréquentiel APRÈS quantification
     _axes[0, 3].imshow(_recon_block, cmap="gray", vmin=16, vmax=235, interpolation="nearest")
-    for _r in range(8):
-        for _c in range(8):
-            _rv: "int" = int(round(float(_recon_block[_r, _c])))
-            _axes[0, 3].text(_c, _r, str(_rv), ha="center", va="center", fontsize=6,
-                             fontweight="bold", color="white" if _rv < 128 else "black")
+    annotate_spatial_block(_axes[0, 3], _recon_block)
     _axes[0, 3].set_title("Valeurs Y — après", fontsize=10)
     _axes[0, 3].axis("off")
 
     _axes[1, 3].imshow(np.abs(_Cq), cmap="plasma", vmin=0, vmax=200, interpolation="nearest")
-    for _r in range(8):
-        for _c in range(8):
-            _qv: "int" = int(round(float(_Cq[_r, _c])))
-            if _qv == 0:
-                _axes[1, 3].text(_c, _r, "0", ha="center", va="center", fontsize=6,
-                                 fontweight="bold", color="#aaaaaa")
-            else:
-                _amp_q: "float" = abs(float(_Cq[_r, _c]))
-                _rgba_q = plt.cm.plasma(min(_amp_q / 200.0, 1.0))
-                _lum_q: "float" = (0.299 * float(_rgba_q[0]) + 0.587 * float(_rgba_q[1])
-                                   + 0.114 * float(_rgba_q[2]))
-                _axes[1, 3].text(_c, _r, str(_qv), ha="center", va="center", fontsize=6,
-                                 fontweight="bold", color="black" if _lum_q > 0.45 else "white")
+    annotate_dct_block(_axes[1, 3], _Cq, zero_color="#aaaaaa")
     _pct_nuls: "int" = 100 * (64 - _n_nz) // 64
     _axes[1, 3].set_title(f"Coefficients DCT — après ({_pct_nuls} % nuls)", fontsize=10)
     _axes[1, 3].axis("off")
@@ -1382,20 +1384,7 @@ def _(
 
     # Panneau gauche : coefficients + chemin zigzag
     _ax_b.imshow(np.abs(_Cq), cmap="plasma", vmin=0, vmax=200, interpolation="nearest")
-    for _r in range(8):
-        for _c in range(8):
-            _qv: "int" = int(round(float(_Cq[_r, _c])))
-            if _qv == 0:
-                _ax_b.text(_c, _r, "0", ha="center", va="center", fontsize=10,
-                           fontweight="bold", color="#aaaaaa", zorder=4)
-            else:
-                _amp_q: "float" = abs(float(_Cq[_r, _c]))
-                _rgba_q = plt.cm.plasma(min(_amp_q / 200.0, 1.0))
-                _lum_q: "float" = (0.299 * float(_rgba_q[0]) + 0.587 * float(_rgba_q[1])
-                                   + 0.114 * float(_rgba_q[2]))
-                _ax_b.text(_c, _r, str(_qv), ha="center", va="center", fontsize=10,
-                           fontweight="bold", color="black" if _lum_q > 0.45 else "white",
-                           zorder=4)
+    annotate_dct_block(_ax_b, _Cq, fontsize=10, zero_color="#aaaaaa", zorder=4)
 
     _segs: "list[list[tuple[float, float]]]" = [
         [(_ZZ_RC[_i][1], _ZZ_RC[_i][0]), (_ZZ_RC[_i + 1][1], _ZZ_RC[_i + 1][0])]
